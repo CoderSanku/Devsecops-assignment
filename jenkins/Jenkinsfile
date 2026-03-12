@@ -50,39 +50,27 @@ pipeline {
             steps {
                 echo '========== Stage 3: Sending Report to Gemini AI for Auto-Fix =========='
                 sh '''
-                    # Read the trivy report
                     TRIVY_REPORT=$(cat trivy-report.json)
                     MAIN_TF=$(cat terraform/main.tf)
 
-                    # Build prompt for Gemini
-                    PROMPT="You are a DevSecOps expert. Here is a Trivy security scan report for Terraform code:\\n\\nTRIVY REPORT:\\n${TRIVY_REPORT}\\n\\nORIGINAL TERRAFORM CODE (main.tf):\\n${MAIN_TF}\\n\\nPlease fix ALL the security vulnerabilities found. Return ONLY the complete fixed main.tf terraform code with no explanation, no markdown, no backticks. Just raw terraform code."
+                    PROMPT="You are a DevSecOps expert. Here is a Trivy security scan report for Terraform code. TRIVY REPORT: ${TRIVY_REPORT} ORIGINAL TERRAFORM CODE main.tf: ${MAIN_TF} Please fix ALL the security vulnerabilities found. Return ONLY the complete fixed main.tf terraform code with no explanation, no markdown, no backticks. Just raw terraform code starting with terraform {"
 
-                    # Call Gemini API
                     RESPONSE=$(curl -s \
                         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
                         -H "Content-Type: application/json" \
-                        -d "{
-                            \\"contents\\": [{
-                                \\"parts\\": [{
-                                    \\"text\\": $(echo "$PROMPT" | jq -Rs .)
-                                }]
-                            }]
-                        }")
+                        -d "{\"contents\": [{\"parts\": [{\"text\": $(echo "$PROMPT" | jq -Rs .)}]}]}")
 
                     echo "AI Response received"
 
-                    # Extract fixed code from response
                     FIXED_CODE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
 
                     if [ -z "$FIXED_CODE" ] || [ "$FIXED_CODE" = "null" ]; then
-                        echo "❌ AI fix failed - empty response"
+                        echo "AI fix failed - empty response"
                         exit 1
                     fi
 
-                    # Save fixed code
                     echo "$FIXED_CODE" > terraform/main.tf
-                    echo "✅ AI has fixed the Terraform code!"
-                    echo "========== Fixed Code =========="
+                    echo "AI has fixed the Terraform code!"
                     cat terraform/main.tf
                 '''
             }
@@ -101,10 +89,10 @@ pipeline {
             }
             post {
                 failure {
-                    echo '❌ Still has vulnerabilities after AI fix!'
+                    echo 'Still has vulnerabilities after AI fix!'
                 }
                 success {
-                    echo '✅ All vulnerabilities fixed by AI!'
+                    echo 'All vulnerabilities fixed by AI!'
                 }
             }
         }
@@ -123,22 +111,10 @@ pipeline {
             echo '========== Pipeline Complete =========='
         }
         failure {
-            echo '❌ Pipeline FAILED'
+            echo 'Pipeline FAILED'
         }
         success {
-            echo '✅ Pipeline PASSED - All security checks cleared!'
+            echo 'Pipeline PASSED - All security checks cleared!'
         }
     }
 }
-```
-
----
-
-## What This Pipeline Does:
-```
-Stage 1: Checkout        → pulls code from GitHub
-Stage 2: Install Tools   → installs Trivy + jq
-Stage 3: Trivy Scan      → finds vulnerabilities, saves report
-Stage 4: AI Auto-Fix     → sends report to Gemini → gets fixed code
-Stage 5: Trivy Re-Scan   → confirms fixes work ✅
-Stage 6: Terraform Plan  → ready to deploy
