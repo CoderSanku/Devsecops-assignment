@@ -1,10 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        TRIVY_VERSION = "0.45.0"
-    }
-
     stages {
 
         stage('Checkout') {
@@ -14,21 +10,30 @@ pipeline {
             }
         }
 
+        stage('Install Trivy') {
+            steps {
+                echo '========== Installing Trivy Scanner =========='
+                sh '''
+                    apt-get update -y
+                    apt-get install -y wget curl apt-transport-https gnupg
+                    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+                    trivy --version
+                '''
+            }
+        }
+
         stage('Trivy IaC Scan') {
             steps {
                 echo '========== Stage 2: Scanning Terraform for Vulnerabilities =========='
                 sh '''
-                    # Install Trivy
-                    wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
-                    # Scan terraform directory
-                    trivy config --exit-code 1 --severity HIGH,CRITICAL ./terraform
+                    echo "Starting Trivy security scan on Terraform files..."
+                    trivy config --exit-code 1 --severity HIGH,CRITICAL --format table ./terraform
                 '''
             }
             post {
                 failure {
                     echo '❌ SECURITY VULNERABILITIES FOUND - Pipeline failed as expected!'
-                    echo 'Check the scan results above for details'
+                    echo 'Copy the report above and use AI to fix the issues'
                 }
                 success {
                     echo '✅ No critical vulnerabilities found!'
@@ -39,11 +44,7 @@ pipeline {
         stage('Terraform Plan') {
             steps {
                 echo '========== Stage 3: Terraform Plan =========='
-                sh '''
-                    cd terraform
-                    terraform init
-                    terraform plan
-                '''
+                echo 'Terraform plan would run here after security scan passes'
             }
         }
 
