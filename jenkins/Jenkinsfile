@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    environment {
+        TRIVY_VERSION = "0.45.0"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo '========== Stage 1: Pulling Code from GitHub =========='
+                checkout scm
+            }
+        }
+
+        stage('Trivy IaC Scan') {
+            steps {
+                echo '========== Stage 2: Scanning Terraform for Vulnerabilities =========='
+                sh '''
+                    # Install Trivy
+                    wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+                    # Scan terraform directory
+                    trivy config --exit-code 1 --severity HIGH,CRITICAL ./terraform
+                '''
+            }
+            post {
+                failure {
+                    echo '❌ SECURITY VULNERABILITIES FOUND - Pipeline failed as expected!'
+                    echo 'Check the scan results above for details'
+                }
+                success {
+                    echo '✅ No critical vulnerabilities found!'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                echo '========== Stage 3: Terraform Plan =========='
+                sh '''
+                    cd terraform
+                    terraform init
+                    terraform plan
+                '''
+            }
+        }
+
+    }
+
+    post {
+        always {
+            echo '========== Pipeline Complete =========='
+        }
+        failure {
+            echo '❌ Pipeline FAILED - Fix security issues and re-run'
+        }
+        success {
+            echo '✅ Pipeline PASSED - All checks cleared!'
+        }
+    }
+}
