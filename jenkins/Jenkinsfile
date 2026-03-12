@@ -72,42 +72,43 @@ pipeline {
                 echo '========== Stage 5: Groq AI Analyzing Vulnerabilities =========='
                 sh '''
                     echo "Extracting vulnerability summary..."
-                    cat trivy-report.json | jq -r \
-                        ".Results[]? | .Misconfigurations[]? | \"ID: \" + .ID + \" | Severity: \" + .Severity + \" | Fix: \" + .Resolution" \
-                        > /tmp/summary.txt
 
-                    echo "Summary extracted:"
-                    cat /tmp/summary.txt
+                    python3 -c "
+import subprocess, json
 
-                    cat > /tmp/build_prompt.py << PYEOF
-import json
+# Extract summary using python subprocess to avoid shell quoting issues
+result = subprocess.run(
+    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | \"ID: \" + .ID + \" | Severity: \" + .Severity + \" | Fix: \" + .Resolution'],
+    stdin=open('trivy-report.json'),
+    capture_output=True, text=True
+)
+summary = result.stdout.strip()
+print('Summary extracted:')
+print(summary)
 
-summary = open("/tmp/summary.txt").read()
-main_tf = open("terraform/main.tf").read()
+main_tf = open('terraform/main.tf').read()
 
 payload = {
-    "model": "llama-3.3-70b-versatile",
-    "messages": [
+    'model': 'llama-3.3-70b-versatile',
+    'messages': [
         {
-            "role": "system",
-            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start directly with: terraform {"
+            'role': 'system',
+            'content': 'You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start directly with: terraform {'
         },
         {
-            "role": "user",
-            "content": "Fix these Terraform security vulnerabilities:\\n\\n" + summary + "\\n\\nOriginal Terraform code:\\n\\n" + main_tf + "\\n\\nReturn ONLY the complete fixed terraform code."
+            'role': 'user',
+            'content': 'Fix these Terraform security vulnerabilities:\n\n' + summary + '\n\nOriginal Terraform code:\n\n' + main_tf + '\n\nReturn ONLY the complete fixed terraform code.'
         }
     ],
-    "temperature": 0.1,
-    "max_tokens": 4000
+    'temperature': 0.1,
+    'max_tokens': 4000
 }
 
-with open("/tmp/prompt.json", "w") as f:
+with open('/tmp/prompt.json', 'w') as f:
     json.dump(payload, f)
 
-print("Prompt file created successfully.")
-PYEOF
-
-                    python3 /tmp/build_prompt.py
+print('Prompt file created successfully.')
+"
 
                     echo "Calling Groq API..."
                     RESPONSE=$(curl -s \
@@ -116,13 +117,13 @@ PYEOF
                         -H "Content-Type: application/json" \
                         -d @/tmp/prompt.json)
 
-                    API_ERROR=$(echo "$RESPONSE" | jq -r ".error.message // empty")
+                    API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
                     if [ -n "$API_ERROR" ]; then
                         echo "ERROR from Groq API: $API_ERROR"
                         exit 1
                     fi
 
-                    FIXED_CODE=$(echo "$RESPONSE" | jq -r ".choices[0].message.content // empty")
+                    FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
 
                     if [ -z "$FIXED_CODE" ]; then
                         echo "ERROR: AI returned empty response!"
