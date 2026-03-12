@@ -19,7 +19,7 @@ pipeline {
                 echo '========== Stage 2: Installing Trivy =========='
                 sh '''
                     apt-get update -y -qq
-                    apt-get install -y wget curl jq apt-transport-https gnupg
+                    apt-get install -y wget curl jq apt-transport-https gnupg python3
                     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor > /usr/share/keyrings/trivy.gpg
                     echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
                     apt-get update -qq
@@ -59,20 +59,10 @@ pipeline {
         stage('Human Approval: Send to AI?') {
             steps {
                 echo '========== Stage 4: Waiting for Human Review =========='
-                echo ''
-                echo '>>> REVIEW the vulnerability report above in Stage 3 output'
-                echo '>>> Then decide whether to proceed with AI-assisted remediation'
-                echo ''
+                echo 'REVIEW the vulnerability report printed in Stage 3 above.'
+                echo 'Then decide whether to proceed with AI-assisted remediation.'
                 timeout(time: 30, unit: 'MINUTES') {
-                    input message: '''
-Security vulnerabilities were found in Terraform code.
-
-Do you want to send this report to Groq AI for automated fix suggestions?
-
-NOTE: This is a Human-in-the-Loop system.
-AI will SUGGEST fixes — you will review and APPROVE before anything is applied.
-                    ''',
-                    ok: 'Yes, Send to AI for Analysis'
+                    input message: 'Vulnerabilities found. Send to Groq AI for fix suggestions?', ok: 'Yes, Send to AI'
                 }
             }
         }
@@ -81,54 +71,43 @@ AI will SUGGEST fixes — you will review and APPROVE before anything is applied
             steps {
                 echo '========== Stage 5: Groq AI Analyzing Vulnerabilities =========='
                 sh '''
-                    echo "Extracting vulnerability summary from Trivy report..."
+                    echo "Extracting vulnerability summary..."
+                    cat trivy-report.json | jq -r \
+                        ".Results[]? | .Misconfigurations[]? | \"ID: \" + .ID + \" | Severity: \" + .Severity + \" | Fix: \" + .Resolution" \
+                        > /tmp/summary.txt
 
-                    SUMMARY=$(cat trivy-report.json | jq -r '
-                        .Results[]? |
-                        .Misconfigurations[]? |
-                        "ID: " + .ID + " | Severity: " + .Severity + " | Title: " + .Title + " | Fix: " + .Resolution
-                    ')
+                    echo "Summary extracted:"
+                    cat /tmp/summary.txt
 
-                    if [ -z "$SUMMARY" ]; then
-                        echo "No vulnerabilities found in report. Nothing to fix."
-                        exit 0
-                    fi
+                    cat > /tmp/build_prompt.py << PYEOF
+import json
 
-                    echo ""
-                    echo "Vulnerabilities being sent to AI:"
-                    echo "$SUMMARY"
-                    echo ""
-
-                    MAIN_TF=$(cat terraform/main.tf)
-
-                    # Build prompt safely using a Python heredoc to avoid shell escaping issues
-                    python3 -c "
-import json, sys
-
-summary = '''$SUMMARY'''
-main_tf = open('terraform/main.tf').read()
+summary = open("/tmp/summary.txt").read()
+main_tf = open("terraform/main.tf").read()
 
 payload = {
-    'model': 'llama-3.3-70b-versatile',
-    'messages': [
+    "model": "llama-3.3-70b-versatile",
+    "messages": [
         {
-            'role': 'system',
-            'content': 'You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start directly with: terraform {'
+            "role": "system",
+            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start directly with: terraform {"
         },
         {
-            'role': 'user',
-            'content': f'Fix these Terraform security vulnerabilities:\n\n{summary}\n\nOriginal Terraform code:\n\n{main_tf}\n\nReturn ONLY the complete fixed terraform code.'
+            "role": "user",
+            "content": "Fix these Terraform security vulnerabilities:\\n\\n" + summary + "\\n\\nOriginal Terraform code:\\n\\n" + main_tf + "\\n\\nReturn ONLY the complete fixed terraform code."
         }
     ],
-    'temperature': 0.1,
-    'max_tokens': 4000
+    "temperature": 0.1,
+    "max_tokens": 4000
 }
 
-with open('/tmp/prompt.json', 'w') as f:
+with open("/tmp/prompt.json", "w") as f:
     json.dump(payload, f)
 
-print('Prompt file created successfully.')
-"
+print("Prompt file created successfully.")
+PYEOF
+
+                    python3 /tmp/build_prompt.py
 
                     echo "Calling Groq API..."
                     RESPONSE=$(curl -s \
@@ -137,13 +116,13 @@ print('Prompt file created successfully.')
                         -H "Content-Type: application/json" \
                         -d @/tmp/prompt.json)
 
-                    API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+                    API_ERROR=$(echo "$RESPONSE" | jq -r ".error.message // empty")
                     if [ -n "$API_ERROR" ]; then
                         echo "ERROR from Groq API: $API_ERROR"
                         exit 1
                     fi
 
-                    FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+                    FIXED_CODE=$(echo "$RESPONSE" | jq -r ".choices[0].message.content // empty")
 
                     if [ -z "$FIXED_CODE" ]; then
                         echo "ERROR: AI returned empty response!"
@@ -159,7 +138,7 @@ print('Prompt file created successfully.')
                     echo "================================================================"
                     cat /tmp/ai_fixed_main.tf
                     echo "================================================================"
-                    echo "  REVIEW the AI fixes above before approving in the next stage"
+                    echo "  REVIEW the AI fixes above then approve in the next stage"
                     echo "================================================================"
                 '''
             }
@@ -168,28 +147,20 @@ print('Prompt file created successfully.')
         stage('Human Approval: Apply AI Fix?') {
             steps {
                 echo '========== Stage 6: Human Review of AI-Suggested Fixes =========='
-                echo ''
-                echo '>>> REVIEW the AI-suggested Terraform code in Stage 5 output above'
-                echo '>>> Only approve if the fixes look correct and safe to apply'
-                echo ''
+                echo 'REVIEW the AI-suggested Terraform code printed in Stage 5 above.'
+                echo 'Only approve if the fixes look correct and safe to apply.'
                 timeout(time: 30, unit: 'MINUTES') {
-                    input message: '''
-AI has suggested fixes for your Terraform vulnerabilities.
-
-Review the fixed code printed in Stage 5 above.
-
-Do you approve applying these AI-suggested fixes to terraform/main.tf?
-
-WARNING: This will overwrite your current main.tf
-                    ''',
-                    ok: 'Yes, Apply AI Fixes to main.tf'
+                    input message: 'AI fixes shown in Stage 5. Apply these fixes to terraform/main.tf?', ok: 'Yes, Apply AI Fixes'
                 }
                 sh '''
-                    echo "Human approved. Applying AI fixes to terraform/main.tf..."
+                    echo "Human approved. Applying AI fixes..."
                     cp terraform/main.tf terraform/main.tf.backup
                     echo "Backup saved to terraform/main.tf.backup"
                     cp /tmp/ai_fixed_main.tf terraform/main.tf
                     echo "AI-fixed code applied successfully!"
+                    echo ""
+                    echo "Final terraform/main.tf:"
+                    cat terraform/main.tf
                 '''
             }
         }
@@ -212,16 +183,10 @@ WARNING: This will overwrite your current main.tf
             }
             post {
                 failure {
-                    echo '================================================================'
                     echo 'WARNING: Vulnerabilities still remain after AI fix!'
-                    echo 'Consider manually reviewing the AI suggestions and re-running.'
-                    echo '================================================================'
                 }
                 success {
-                    echo '================================================================'
-                    echo 'SUCCESS: All HIGH/CRITICAL vulnerabilities have been resolved!'
-                    echo 'Terraform code is now secure. Proceeding to plan...'
-                    echo '================================================================'
+                    echo 'SUCCESS: All HIGH/CRITICAL vulnerabilities resolved!'
                 }
             }
         }
@@ -230,9 +195,7 @@ WARNING: This will overwrite your current main.tf
             steps {
                 echo '========== Stage 8: Terraform Plan =========='
                 echo 'Security scan passed! Infrastructure code is secure.'
-                echo 'Ready for: terraform apply'
-                echo ''
-                echo 'Run terraform apply manually or add a deploy stage with approval.'
+                echo 'Ready for terraform apply to AWS.'
             }
         }
 
@@ -241,14 +204,12 @@ WARNING: This will overwrite your current main.tf
     post {
         always {
             echo '========== Pipeline Execution Complete =========='
-            echo 'Check Stage 3 for initial vulnerabilities found.'
-            echo 'Check Stage 7 for post-fix scan results.'
         }
         failure {
             echo 'Pipeline FAILED - Review the failing stage above.'
         }
         success {
-            echo 'Pipeline PASSED - All security checks cleared! Infrastructure is secure.'
+            echo 'Pipeline PASSED - All security checks cleared!'
         }
     }
 }
