@@ -1,127 +1,56 @@
-pipeline {
-    agent any
-
+stage('AI Auto-Fix') {
     environment {
-        GEMINI_API_KEY = credentials('gemini-api-key')
+        GROQ_API_KEY = credentials('groq-api-key')
     }
+    steps {
+        echo '========== Stage 3: Sending Report to Groq AI for Auto-Fix =========='
+        sh '''
+            SUMMARY=$(cat trivy-report.json | jq -r '
+                .Results[]? |
+                .Misconfigurations[]? |
+                "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
+            ')
 
-    stages {
+            MAIN_TF=$(cat terraform/main.tf)
 
-        stage('Checkout') {
-            steps {
-                echo '========== Stage 1: Pulling Code from GitHub =========='
-                checkout scm
-            }
-        }
-
-        stage('Install Tools') {
-            steps {
-                echo '========== Installing Trivy =========='
-                sh '''
-                    apt-get update -y -qq
-                    apt-get install -y wget curl jq apt-transport-https gnupg
-
-                    wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor > /usr/share/keyrings/trivy.gpg
-                    echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
-                    apt-get update -qq
-                    apt-get install -y trivy
-
-                    echo "Trivy version:"
-                    trivy --version
-                '''
-            }
-        }
-
-        stage('Trivy IaC Scan') {
-            steps {
-                echo '========== Stage 2: Scanning Terraform for Vulnerabilities =========='
-                sh '''
-                    trivy config \
-                        --exit-code 0 \
-                        --severity HIGH,CRITICAL \
-                        --format json \
-                        --output trivy-report.json \
-                        ./terraform
-
-                    trivy config \
-                        --exit-code 0 \
-                        --severity HIGH,CRITICAL \
-                        --format table \
-                        ./terraform
-                '''
-            }
-        }
-
-        stage('AI Auto-Fix') {
-            steps {
-                echo '========== Stage 3: Sending Report to Gemini AI for Auto-Fix =========='
-                sh '''
-                    TRIVY_REPORT=$(cat trivy-report.json)
-                    MAIN_TF=$(cat terraform/main.tf)
-
-                    PROMPT="You are a DevSecOps expert. Here is a Trivy security scan report for Terraform code. TRIVY REPORT: ${TRIVY_REPORT} ORIGINAL TERRAFORM CODE main.tf: ${MAIN_TF} Please fix ALL the security vulnerabilities found. Return ONLY the complete fixed main.tf terraform code with no explanation, no markdown, no backticks. Just raw terraform code starting with terraform {"
-
-                    RESPONSE=$(curl -s \
-                        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
-                        -H "Content-Type: application/json" \
-                        -d "{\"contents\": [{\"parts\": [{\"text\": $(echo "$PROMPT" | jq -Rs .)}]}]}")
-
-                    echo "AI Response received"
-
-                    FIXED_CODE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
-
-                    if [ -z "$FIXED_CODE" ] || [ "$FIXED_CODE" = "null" ]; then
-                        echo "AI fix failed - empty response"
-                        echo "Full API response: $RESPONSE"
-                        exit 1
-                    fi
-
-                    echo "$FIXED_CODE" > terraform/main.tf
-                    echo "AI has fixed the Terraform code!"
-                    cat terraform/main.tf
-                '''
-            }
-        }
-
-        stage('Trivy Re-Scan After AI Fix') {
-            steps {
-                echo '========== Stage 4: Re-scanning After AI Fix =========='
-                sh '''
-                    trivy config \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --format table \
-                        ./terraform
-                '''
-            }
-            post {
-                failure {
-                    echo 'Still has vulnerabilities after AI fix!'
-                }
-                success {
-                    echo 'All vulnerabilities fixed by AI!'
-                }
-            }
-        }
-
-        stage('Terraform Plan') {
-            steps {
-                echo '========== Stage 5: Terraform Plan =========='
-                echo 'Security scan passed! Ready for deployment.'
-            }
-        }
-
+            cat > /tmp/prompt.json << PROMPTEOF
+{
+  "model": "llama-3.3-70b-versatile",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a DevSecOps expert. When given Terraform code and security vulnerabilities, you return ONLY the fixed terraform code. No explanation, no markdown, no backticks. Raw HCL only."
+    },
+    {
+      "role": "user",
+      "content": "Fix these Terraform vulnerabilities:\n\n${SUMMARY}\n\nTerraform code to fix:\n\n${MAIN_TF}\n\nReturn ONLY the fixed terraform code starting with: terraform {"
     }
+  ],
+  "temperature": 0.1,
+  "max_tokens": 4000
+}
+PROMPTEOF
 
-    post {
-        always {
-            echo '========== Pipeline Complete =========='
-        }
-        failure {
-            echo 'Pipeline FAILED'
-        }
-        success {
-            echo 'Pipeline PASSED - All security checks cleared!'
-        }
+            echo "Calling Groq API..."
+            RESPONSE=$(curl -s \
+                "https://api.groq.com/openai/v1/chat/completions" \
+                -H "Authorization: Bearer ${GROQ_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d @/tmp/prompt.json)
+
+            echo "API Status: $(echo $RESPONSE | jq -r '.error.message // "OK"')"
+
+            FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+
+            if [ -z "$FIXED_CODE" ]; then
+                echo "ERROR: AI fix failed!"
+                echo "Response: $RESPONSE"
+                exit 1
+            fi
+
+            echo "$FIXED_CODE" > terraform/main.tf
+            echo "Groq AI successfully fixed the Terraform code!"
+            cat terraform/main.tf
+        '''
     }
 }
