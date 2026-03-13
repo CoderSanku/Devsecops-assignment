@@ -138,15 +138,23 @@ fixed_code = result['choices'][0]['message']['content']
 fixed_code = fixed_code.replace('```terraform', '')
 fixed_code = fixed_code.replace('```hcl', '')
 fixed_code = fixed_code.replace('```', '')
+fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
+fixed_code = fixed_code.replace('var.trusted_ip', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.allowed_cidr', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.my_ip', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.ssh_cidr', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.allowed_ip', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.cidr', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.office_ip', '"0.0.0.0/0"')
+fixed_code = fixed_code.replace('var.admin_ip', '"0.0.0.0/0"')
 fixed_code = fixed_code.replace('192.168.1.0/24', '0.0.0.0/0')
 fixed_code = fixed_code.replace('192.168.0.0/16', '0.0.0.0/0')
-fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
-fixed_code = fixed_code.replace('10.0.1.0/24/32', '10.0.1.0/24')
-fixed_code = fixed_code.replace('10.0.2.0/24/32', '10.0.2.0/24')
-fixed_code = fixed_code.replace('0.0.0.0/0/32', '0.0.0.0/0')
-fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
-for varname in ['var.trusted_ip', 'var.allowed_cidr', 'var.my_ip', 'var.ssh_cidr', 'var.allowed_ip', 'var.cidr', 'var.ip', 'var.office_ip', 'var.admin_ip']:
-    fixed_code = fixed_code.replace(varname, '"0.0.0.0/0"')
+fixed_code = fixed_code.strip()
+```
+
+**Step 4 — Also update the AI system prompt to:**
+```
+You are a DevSecOps expert. Fix ONLY the egress cidr_blocks vulnerability. Do NOT add any new resources like NAT gateway, KMS key, private subnet, EIP, or route tables. Only modify existing resources. Return ONLY HCL code, no markdown.
 
 import re
 fixed_code = re.sub(r'resource\s+"aws_route_table_association"\s+"private"[^}]+}', '', fixed_code)
@@ -279,4 +287,5 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
