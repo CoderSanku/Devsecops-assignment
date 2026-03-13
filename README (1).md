@@ -32,7 +32,7 @@ In this project, I created an end-to-end **DevSecOps CI/CD pipeline** with **AI-
 
 ## Prerequisites
 
-1. Git & GitHub
+1. Git & 
 2. Docker Desktop
 3. Jenkins (running in Docker)
 4. Groq API Key — [console.groq.com](https://console.groq.com) (free)
@@ -48,7 +48,7 @@ In this project, I created an end-to-end **DevSecOps CI/CD pipeline** with **AI-
 ### Stage-01: Clone Repository and Set Up Node.js App
 
 ```bash
-git clone https://github.com/CoderSanku/DevSecOps-Assignment.git
+git clone https://.com/CoderSanku/DevSecOps-Assignment.git
 cd DevSecOps-Assignment
 ```
 
@@ -101,8 +101,8 @@ Trivy is installed automatically inside the Jenkins pipeline. To install manuall
 
 ```bash
 sudo apt-get install wget apt-transport-https gnupg lsb-release
-wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+wget -qO - https://aquasecurity..io/trivy-repo/deb/public.key | sudo apt-key add -
+echo deb https://aquasecurity..io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
 sudo apt-get update && sudo apt-get install trivy
 ```
 
@@ -142,7 +142,7 @@ Add the following credentials in **Jenkins > Manage Jenkins > Credentials > Syst
 | Credential ID | Type | Value |
 |---|---|---|
 | `groq-api-key` | Secret text | Groq API Key |
-| `github-credentials` | Username + Password | GitHub username + Personal Access Token |
+| `-credentials` | Username + Password |  username + Personal Access Token |
 | `aws-access-key` | Secret text | AWS Access Key ID |
 | `aws-secret-key` | Secret text | AWS Secret Access Key |
 
@@ -157,7 +157,7 @@ Add the following credentials in **Jenkins > Manage Jenkins > Credentials > Syst
 ```groovy
 stage('Checkout') {
     steps {
-        git branch: 'main', url: 'https://github.com/CoderSanku/DevSecOps-Assignment'
+        git branch: 'main', url: 'https://.com/CoderSanku/DevSecOps-Assignment'
     }
 }
 ```
@@ -170,7 +170,7 @@ stage('Checkout') {
 stage('Install Tools') {
     steps {
         sh '''
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            curl -sfL https://raw.usercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
             wget -O terraform.zip https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
             unzip -o terraform.zip -d /usr/local/bin/
         '''
@@ -304,10 +304,10 @@ After AI fix — Trivy finds **0 vulnerabilities**:
 
 ---
 
-### Stage-08: Push Secured Code to GitHub
+### Stage-08: Push Secured Code to 
 
 ```groovy
-stage('Push Fix to GitHub') {
+stage('Push Fix to ') {
     steps {
         withCredentials([usernamePassword(credentialsId: 'github-credentials',
             usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
@@ -358,7 +358,7 @@ stage('Deploy to AWS') {
 }
 ```
 
-Find the complete Jenkinsfile here: [jenkins/Jenkinsfile](https://github.com/CoderSanku/DevSecOps-Assignment/blob/main/jenkins/Jenkinsfile)
+Find the complete Jenkinsfile here: [jenkins/Jenkinsfile](https://github.com/CoderSanku/Devsecops-assignment)
 
 ---
 
