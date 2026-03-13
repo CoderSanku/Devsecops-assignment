@@ -78,74 +78,76 @@ pipeline {
       stage('AI Suggests Fix') {
             steps {
                 echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
-                sh '''
-                    apt-get install -y dos2unix -qq
+                withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_KEY')]) {
+                    sh '''
+                        apt-get install -y dos2unix -qq
 
-                    cat trivy-report.json | jq -r '
-                        .Results[]? |
-                        .Misconfigurations[]? |
-                        "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
-                    ' > /tmp/summary.txt
+                        cat trivy-report.json | jq -r '
+                            .Results[]? |
+                            .Misconfigurations[]? |
+                            "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
+                        ' > /tmp/summary.txt
 
-                    # Strip Windows line endings from terraform file
-                    dos2unix terraform/main.tf 2>/dev/null
-                    cat terraform/main.tf > /tmp/maintf.txt
+                        dos2unix terraform/main.tf 2>/dev/null
+                        cat terraform/main.tf > /tmp/maintf.txt
 
-                    echo "Vulnerabilities being sent to AI:"
-                    cat /tmp/summary.txt
+                        echo "Vulnerabilities being sent to AI:"
+                        cat /tmp/summary.txt
 
-                    jq -n \
-                        --arg summary "$(cat /tmp/summary.txt)" \
-                        --arg code "$(cat /tmp/maintf.txt)" \
-                        '{
-                            "model": "llama-3.3-70b-versatile",
-                            "messages": [
-                                {
-                                    "role": "system",
-                                    "content": "You are a DevSecOps expert. Fix ALL Terraform vulnerabilities listed. Return ONLY raw HCL terraform code. No markdown, no backticks, no explanation. Start directly with: terraform {"
-                                },
-                                {
-                                    "role": "user",
-                                    "content": ("Fix these vulnerabilities:\n\n" + $summary + "\n\nTerraform code to fix:\n\n" + $code + "\n\nReturn ONLY the fixed terraform code.")
-                                }
-                            ],
-                            "temperature": 0.1,
-                            "max_tokens": 4000
-                        }' > /tmp/prompt.json
+                        jq -n \
+                            --arg summary "$(cat /tmp/summary.txt)" \
+                            --arg code "$(cat /tmp/maintf.txt)" \
+                            '{
+                                "model": "llama-3.3-70b-versatile",
+                                "messages": [
+                                    {
+                                        "role": "system",
+                                        "content": "You are a DevSecOps expert. Fix ALL Terraform vulnerabilities listed. Return ONLY raw HCL terraform code. No markdown, no backticks, no explanation. Start directly with: terraform {"
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": ("Fix these vulnerabilities:\n\n" + $summary + "\n\nTerraform code to fix:\n\n" + $code + "\n\nReturn ONLY the fixed terraform code.")
+                                    }
+                                ],
+                                "temperature": 0.1,
+                                "max_tokens": 4000
+                            }' > /tmp/prompt.json
 
-                    echo "Calling Groq API..."
+                        echo "Calling Groq API..."
 
-                    curl -s \
-                        --max-time 30 \
-                        "https://api.groq.com/openai/v1/chat/completions" \
-                        -H "Authorization: Bearer ${GROQ_API_KEY}" \
-                        -H "Content-Type: application/json" \
-                        -d @/tmp/prompt.json \
-                        -o /tmp/response.json
+                        curl -s \
+                            --max-time 60 \
+                            --header "Authorization: Bearer $GROQ_KEY" \
+                            --header "Content-Type: application/json" \
+                            --data @/tmp/prompt.json \
+                            "https://api.groq.com/openai/v1/chat/completions" \
+                            --output /tmp/response.json
 
-                    echo "Response received!"
+                        echo "Curl exit code: $?"
+                        echo "Response file size: $(wc -c < /tmp/response.json) bytes"
 
-                    API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
-                    if [ ! -z "$API_ERROR" ]; then
-                        echo "API Error: $API_ERROR"
-                        exit 1
-                    fi
+                        API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
+                        if [ ! -z "$API_ERROR" ]; then
+                            echo "API Error: $API_ERROR"
+                            exit 1
+                        fi
 
-                    jq -r '.choices[0].message.content // empty' /tmp/response.json > /tmp/ai-fixed-main.tf
+                        jq -r '.choices[0].message.content // empty' /tmp/response.json > /tmp/ai-fixed-main.tf
 
-                    if [ ! -s /tmp/ai-fixed-main.tf ]; then
-                        echo "ERROR: AI returned empty response!"
-                        cat /tmp/response.json
-                        exit 1
-                    fi
+                        if [ ! -s /tmp/ai-fixed-main.tf ]; then
+                            echo "ERROR: AI returned empty response!"
+                            cat /tmp/response.json
+                            exit 1
+                        fi
 
-                    echo ""
-                    echo "================================================"
-                    echo "   AI SUGGESTED FIX - PLEASE REVIEW:"
-                    echo "================================================"
-                    cat /tmp/ai-fixed-main.tf
-                    echo "================================================"
-                '''
+                        echo ""
+                        echo "================================================"
+                        echo "   AI SUGGESTED FIX - PLEASE REVIEW:"
+                        echo "================================================"
+                        cat /tmp/ai-fixed-main.tf
+                        echo "================================================"
+                    '''
+                }
             }
         }
         
@@ -230,6 +232,7 @@ pipeline {
         }
     }
 }
+
 
 
 
