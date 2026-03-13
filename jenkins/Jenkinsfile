@@ -100,7 +100,7 @@ payload = json.dumps({
     "messages": [
         {
             "role": "system",
-            "content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress as 0.0.0.0/0. Return ONLY HCL code."
+            "content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress open to 0.0.0.0/0. Do not use variables for cidr_blocks, use actual IP values. Return ONLY HCL code, no markdown."
         },
         {
             "role": "user",
@@ -134,7 +134,6 @@ except urllib.error.HTTPError as e:
     print('Error body: ' + error_body)
     raise
 
-import re
 fixed_code = result['choices'][0]['message']['content']
 fixed_code = fixed_code.replace('```terraform', '')
 fixed_code = fixed_code.replace('```hcl', '')
@@ -145,8 +144,12 @@ fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
 fixed_code = fixed_code.replace('10.0.1.0/24/32', '10.0.1.0/24')
 fixed_code = fixed_code.replace('10.0.2.0/24/32', '10.0.2.0/24')
 fixed_code = fixed_code.replace('0.0.0.0/0/32', '0.0.0.0/0')
+fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
+for varname in ['var.trusted_ip', 'var.allowed_cidr', 'var.my_ip', 'var.ssh_cidr', 'var.allowed_ip', 'var.cidr', 'var.ip', 'var.office_ip', 'var.admin_ip']:
+    fixed_code = fixed_code.replace(varname, '"0.0.0.0/0"')
 fixed_code = fixed_code.strip()
 print('AI fix received and cleaned!')
+
 with open('/tmp/ai_fixed_main.tf', 'w') as f:
     f.write(fixed_code)
 
@@ -160,16 +163,6 @@ PYEOF
                     echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
                     python3 /tmp/fix.py
                     rm -f /tmp/groq_key.txt
-
-                   cat > /tmp/cidr_fix.py << 'PYEOF2'
-import re
-content = open('/tmp/ai_fixed_main.tf').read()
-content = re.sub(r'var\.\w+', '"0.0.0.0/0"', content)
-content = content.replace('subnet_id = aws_subnet.private.id', 'subnet_id = aws_subnet.public.id')
-open('/tmp/ai_fixed_main.tf', 'w').write(content)
-print("All variable CIDRs replaced!")
-PYEOF2
-                    python3 /tmp/cidr_fix.py
                 '''
             }
         }
@@ -278,4 +271,3 @@ PYEOF2
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
-
