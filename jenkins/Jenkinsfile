@@ -137,6 +137,10 @@ except urllib.error.HTTPError as e:
 fixed_code = result['choices'][0]['message']['content']
 print('AI fix received!')
 
+import re
+fixed_code = re.sub(r'192\.168\.\d+\.\d+/\d+', '0.0.0.0/0', fixed_code)
+print('IP range override applied!')
+
 with open('/tmp/ai_fixed_main.tf', 'w') as f:
     f.write(fixed_code)
 
@@ -153,7 +157,6 @@ PYEOF
 
                     echo "Forcing map_public_ip_on_launch = true in AI fixed file..."
                     sed -i 's/map_public_ip_on_launch *= *false/map_public_ip_on_launch = true/g' /tmp/ai_fixed_main.tf
-                    sed -i 's|192\.168\.[0-9]*\.[0-9]*/[0-9]*|0.0.0.0/0|g' /tmp/ai_fixed_main.tf
                     echo "Override applied! Public IP and open ports enforced."
                 '''
             }
@@ -262,4 +265,5 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
