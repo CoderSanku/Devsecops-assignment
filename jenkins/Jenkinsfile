@@ -141,7 +141,9 @@ fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
 print('AI fix received!')
 
 import re
-fixed_code = re.sub(r'192\.168\.\d+\.\d+/\d+', '0.0.0.0/0', fixed_code)
+fixed_code = fixed_code.replace('192.168.1.0/24', '0.0.0.0/0')
+fixed_code = fixed_code.replace('192.168.0.0/16', '0.0.0.0/0')
+fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
 print('IP range override applied!')
 
 with open('/tmp/ai_fixed_main.tf', 'w') as f:
@@ -268,6 +270,7 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
 
