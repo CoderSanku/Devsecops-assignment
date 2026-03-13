@@ -75,16 +75,20 @@ pipeline {
             }
         }
 
-       stage('AI Suggests Fix') {
+      stage('AI Suggests Fix') {
             steps {
                 echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
                 sh '''
+                    apt-get install -y dos2unix -qq
+
                     cat trivy-report.json | jq -r '
                         .Results[]? |
                         .Misconfigurations[]? |
                         "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
                     ' > /tmp/summary.txt
 
+                    # Strip Windows line endings from terraform file
+                    dos2unix terraform/main.tf 2>/dev/null
                     cat terraform/main.tf > /tmp/maintf.txt
 
                     echo "Vulnerabilities being sent to AI:"
@@ -112,20 +116,21 @@ pipeline {
                     echo "Calling Groq API..."
 
                     curl -s \
+                        --max-time 30 \
                         "https://api.groq.com/openai/v1/chat/completions" \
                         -H "Authorization: Bearer ${GROQ_API_KEY}" \
                         -H "Content-Type: application/json" \
                         -d @/tmp/prompt.json \
                         -o /tmp/response.json
 
-                    # Check for API error
+                    echo "Response received!"
+
                     API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
                     if [ ! -z "$API_ERROR" ]; then
                         echo "API Error: $API_ERROR"
                         exit 1
                     fi
 
-                    # Extract fixed code
                     jq -r '.choices[0].message.content // empty' /tmp/response.json > /tmp/ai-fixed-main.tf
 
                     if [ ! -s /tmp/ai-fixed-main.tf ]; then
@@ -139,8 +144,6 @@ pipeline {
                     echo "   AI SUGGESTED FIX - PLEASE REVIEW:"
                     echo "================================================"
                     cat /tmp/ai-fixed-main.tf
-                    echo "================================================"
-                    echo "Review the AI suggested code above then approve"
                     echo "================================================"
                 '''
             }
@@ -227,5 +230,6 @@ pipeline {
         }
     }
 }
+
 
 
