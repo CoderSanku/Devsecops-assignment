@@ -98,10 +98,10 @@ user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
-       {
-    "role": "system",
-    "content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress as 0.0.0.0/0. Return ONLY HCL code."
-      },
+        {
+            "role": "system",
+            "content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress as 0.0.0.0/0. Return ONLY HCL code."
+        },
         {
             "role": "user",
             "content": user_msg
@@ -161,14 +161,14 @@ PYEOF
                     python3 /tmp/fix.py
                     rm -f /tmp/groq_key.txt
 
-                    echo "Forcing map_public_ip_on_launch = true in AI fixed file..."
-                    ssed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
-                    sed -i 's/subnet_id *= *aws_subnet.private.id/subnet_id = aws_subnet.public.id/g' /tmp/ai_fixed_main.tf
-                    sed -i 's/var\.trusted_ip/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
-                    sed -i 's/var\.allowed_cidr/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
-                    sed -i 's/var\.my_ip/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
-                    sed -i 's/var\.ssh_cidr/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
-                    echo "Override applied! All variable CIDRs replaced."
+                    python3 << 'FIXEOF'
+import re
+content = open('/tmp/ai_fixed_main.tf').read()
+content = re.sub(r'var\.\w+', '"0.0.0.0/0"', content)
+content = content.replace('subnet_id = aws_subnet.private.id', 'subnet_id = aws_subnet.public.id')
+open('/tmp/ai_fixed_main.tf', 'w').write(content)
+print("All variable CIDRs replaced!")
+FIXEOF
                 '''
             }
         }
@@ -277,18 +277,3 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
