@@ -135,9 +135,14 @@ app.get('/', (req, res) => {
   <div class="section-title">Architecture & Workflow</div>
   <div class="arch">
     <div class="arch-row">
+   <div class="arch-box">
+        <div class="arch-box-title">Code + Docker</div>
+        <div class="arch-box-sub">App containerized</div>
+      </div>
+      <div class="arch-arrow">→</div>
       <div class="arch-box">
         <div class="arch-box-title">GitHub</div>
-        <div class="arch-box-sub">Source code</div>
+        <div class="arch-box-sub">Source control</div>
       </div>
       <div class="arch-arrow">→</div>
       <div class="arch-box">
@@ -264,3 +269,4 @@ app.get('/health', (req, res) => {
 });
 
 app.listen(3000, () => console.log('Server running on port 3000'));
+
