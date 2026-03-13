@@ -590,7 +590,7 @@ DevSecOps-Assignment/
 Full pipeline walkthrough — vulnerabilities detected, AI fix generated, human approvals, live AWS deployment.
 
 ```
-https://drive.google.com/YOUR_VIDEO_LINK
+[https://drive.google.com/YOUR_VIDEO_LINK](https://drive.google.com/file/d/1kz0WHt19HV1h7vYeGLDjU20UnLDpymUQ/view?usp=drive_link)
 ```
 
 ---
