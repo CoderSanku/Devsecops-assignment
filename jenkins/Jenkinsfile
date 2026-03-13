@@ -162,9 +162,13 @@ PYEOF
                     rm -f /tmp/groq_key.txt
 
                     echo "Forcing map_public_ip_on_launch = true in AI fixed file..."
-                    sed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
+                    ssed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
                     sed -i 's/subnet_id *= *aws_subnet.private.id/subnet_id = aws_subnet.public.id/g' /tmp/ai_fixed_main.tf
-                    echo "Override applied! Public IP and open ports enforced."
+                    sed -i 's/var\.trusted_ip/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
+                    sed -i 's/var\.allowed_cidr/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
+                    sed -i 's/var\.my_ip/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
+                    sed -i 's/var\.ssh_cidr/"0.0.0.0\/0"/g' /tmp/ai_fixed_main.tf
+                    echo "Override applied! All variable CIDRs replaced."
                 '''
             }
         }
@@ -273,6 +277,7 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
 
