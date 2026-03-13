@@ -113,9 +113,15 @@ req = urllib.request.Request(
 )
 
 print('Calling Groq API...')
-with urllib.request.urlopen(req, timeout=60) as response:
-    result = json.loads(response.read().decode('utf-8'))
-
+try:
+    with urllib.request.urlopen(req, timeout=60) as response:
+        result = json.loads(response.read().decode('utf-8'))
+except urllib.error.HTTPError as e:
+    error_body = e.read().decode('utf-8')
+    print('HTTP Error: ' + str(e.code))
+    print('Error body: ' + error_body)
+    raise
+    
 fixed_code = result['choices'][0]['message']['content']
 print('AI fix received!')
 
@@ -207,3 +213,4 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
+
