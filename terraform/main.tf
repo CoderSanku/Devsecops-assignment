@@ -89,7 +89,7 @@ resource "aws_kms_key" "example" {
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.private.id
+  subnet_id = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
@@ -154,6 +154,6 @@ resource "aws_subnet" "private" {
 
 # ===== ROUTE TABLE ASSOCIATION FOR PRIVATE SUBNET =====
 resource "aws_route_table_association" "private" {
-  subnet_id      = aws_subnet.private.id
+  subnet_id = aws_subnet.public.id
   route_table_id = aws_route_table.private.id
 }
