@@ -10,16 +10,18 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo '========== Stage 1: Pulling Code from GitHub =========='
-                checkout scm
+                git credentialsId: 'github-credentials',
+                    url: 'https://github.com/CoderSanku/DevSecOps-Assignment.git',
+                    branch: 'main'
             }
         }
 
-        stage('Install Trivy') {
+        stage('Install Tools') {
             steps {
-                echo '========== Stage 2: Installing Trivy Scanner =========='
+                echo '========== Stage 2: Installing Trivy =========='
                 sh '''
                     apt-get update -y -qq
-                    apt-get install -y wget curl jq apt-transport-https gnupg dos2unix -qq
+                    apt-get install -y wget apt-transport-https gnupg python3
                     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor > /usr/share/keyrings/trivy.gpg
                     echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
                     apt-get update -qq
@@ -40,235 +42,160 @@ pipeline {
                         --output trivy-report.json \
                         ./terraform
 
-                    echo ""
-                    echo "================================================"
-                    echo "         TRIVY SECURITY SCAN REPORT"
-                    echo "================================================"
+                    echo "================================================================"
+                    echo "           SECURITY VULNERABILITY REPORT"
+                    echo "================================================================"
                     trivy config \
                         --exit-code 0 \
                         --severity HIGH,CRITICAL \
                         --format table \
                         ./terraform
-                    echo "================================================"
-
-                    VULN_COUNT=$(cat trivy-report.json | jq '[.Results[]?.Misconfigurations[]?] | length')
-                    echo "Total vulnerabilities found: $VULN_COUNT"
-                    echo "================================================"
-                    echo $VULN_COUNT > /tmp/vuln_count.txt
+                    echo "================================================================"
                 '''
-            }
-        }
-
-        stage('Security Gate') {
-            steps {
-                script {
-                    def vulnCount = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim().toInteger()
-
-                    if (vulnCount == 0) {
-                        echo '================================================'
-                        echo 'ZERO vulnerabilities found! Code is already secure!'
-                        echo 'Skipping AI fix stages - proceeding to deploy!'
-                        echo '================================================'
-                        env.NEEDS_FIX = 'false'
-                    } else {
-                        echo '================================================'
-                        echo "Found ${vulnCount} vulnerabilities - proceeding to AI fix!"
-                        echo '================================================'
-                        env.NEEDS_FIX = 'true'
-                    }
-                }
             }
         }
 
         stage('Human Approval: Send to AI?') {
-            when {
-                environment name: 'NEEDS_FIX', value: 'true'
-            }
             steps {
-                sh '''
-                    echo ""
-                    echo "================================================"
-                    echo "   SECURITY VULNERABILITIES DETECTED"
-                    echo "================================================"
-                    cat trivy-report.json | jq -r '.Results[]? | .Misconfigurations[]? | "  ID: " + .ID + " [" + .Severity + "] - " + .Message'
-                    echo "================================================"
-                    echo "Waiting for human approval to send to AI..."
-                    echo "================================================"
-                '''
-                input message: 'Trivy found security vulnerabilities! Send report to Groq AI for fix suggestions?',
-                      ok: 'Yes - Send to AI',
-                      submitter: 'admin'
-            }
-        }
-
-        stage('AI Suggests Fix') {
-            when {
-                environment name: 'NEEDS_FIX', value: 'true'
-            }
-            steps {
-                echo '========== Stage 6: Groq AI Analyzing and Fixing =========='
-                withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_KEY')]) {
-                    sh '''
-                        cat trivy-report.json | jq -r '
-                            .Results[]? |
-                            .Misconfigurations[]? |
-                            "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
-                        ' > /tmp/summary.txt
-
-                        dos2unix terraform/main.tf 2>/dev/null
-                        cat terraform/main.tf > /tmp/maintf.txt
-
-                        echo "Vulnerabilities being sent to AI:"
-                        cat /tmp/summary.txt
-
-                        jq -n \
-                            --arg summary "$(cat /tmp/summary.txt)" \
-                            --arg code "$(cat /tmp/maintf.txt)" \
-                            '{
-                                "model": "llama-3.3-70b-versatile",
-                                "messages": [
-                                    {
-                                        "role": "system",
-                                        "content": "You are a DevSecOps expert. Fix ALL Terraform vulnerabilities listed. Return ONLY raw HCL terraform code. No markdown, no backticks, no explanation. Start directly with: terraform {"
-                                    },
-                                    {
-                                        "role": "user",
-                                        "content": ("Fix these vulnerabilities:\n\n" + $summary + "\n\nTerraform code to fix:\n\n" + $code + "\n\nReturn ONLY the fixed terraform code.")
-                                    }
-                                ],
-                                "temperature": 0.1,
-                                "max_tokens": 4000
-                            }' > /tmp/prompt.json
-
-                        echo "Calling Groq API..."
-
-                        curl -s \
-                            --max-time 60 \
-                            --header "Authorization: Bearer $GROQ_KEY" \
-                            --header "Content-Type: application/json" \
-                            --data @/tmp/prompt.json \
-                            "https://api.groq.com/openai/v1/chat/completions" \
-                            --output /tmp/response.json
-
-                        echo "Response size: $(wc -c < /tmp/response.json) bytes"
-
-                        API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
-                        if [ ! -z "$API_ERROR" ]; then
-                            echo "API Error: $API_ERROR"
-                            exit 1
-                        fi
-
-                        jq -r '.choices[0].message.content // empty' /tmp/response.json > /tmp/ai-fixed-main.tf
-
-                        if [ ! -s /tmp/ai-fixed-main.tf ]; then
-                            echo "ERROR: AI returned empty response!"
-                            exit 1
-                        fi
-
-                        echo ""
-                        echo "================================================"
-                        echo "   AI SUGGESTED FIX - PLEASE REVIEW:"
-                        echo "================================================"
-                        cat /tmp/ai-fixed-main.tf
-                        echo "================================================"
-                    '''
+                echo '========== Stage 4: Waiting for Human Review =========='
+                echo 'Review the vulnerability report in Stage 3 above.'
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'Vulnerabilities found. Send to Groq AI for fix?', ok: 'Yes, Send to AI'
                 }
             }
         }
 
-        stage('Human Approval: Apply AI Fix?') {
-            when {
-                environment name: 'NEEDS_FIX', value: 'true'
-            }
+        stage('AI Security Remediation') {
             steps {
+                echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
                 sh '''
-                    echo ""
-                    echo "================================================"
-                    echo "   HUMAN REVIEW REQUIRED"
-                    echo "================================================"
-                    echo "AI suggested fix is shown above in Stage 6 logs"
-                    echo "Review the code before approving"
-                    echo "================================================"
+                    python3 -c "
+import subprocess, json
+
+result = subprocess.run(
+    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | \"ID: \" + .ID + \" | Severity: \" + .Severity + \" | Fix: \" + .Resolution'],
+    stdin=open('trivy-report.json'),
+    capture_output=True, text=True
+)
+summary = result.stdout.strip()
+print('Vulnerabilities found:')
+print(summary)
+
+main_tf = open('terraform/main.tf').read()
+
+payload = {
+    'model': 'llama-3.3-70b-versatile',
+    'messages': [
+        {
+            'role': 'system',
+            'content': 'You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {'
+        },
+        {
+            'role': 'user',
+            'content': 'Fix these vulnerabilities:\n\n' + summary + '\n\nCode:\n\n' + main_tf + '\n\nReturn ONLY fixed terraform code.'
+        }
+    ],
+    'temperature': 0.1,
+    'max_tokens': 4000
+}
+
+with open('/tmp/prompt.json', 'w') as f:
+    json.dump(payload, f)
+print('Prompt ready.')
+"
+
+                    echo "Calling Groq API..."
+                    RESPONSE=$(curl -s --max-time 30 \
+                        "https://api.groq.com/openai/v1/chat/completions" \
+                        -H "Authorization: Bearer ${GROQ_API_KEY}" \
+                        -H "Content-Type: application/json" \
+                        -d @/tmp/prompt.json)
+
+                    echo "API Response received."
+
+                    FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+
+                    if [ -z "$FIXED_CODE" ]; then
+                        echo "ERROR: AI returned empty!"
+                        echo "$RESPONSE"
+                        exit 1
+                    fi
+
+                    echo "$FIXED_CODE" > /tmp/ai_fixed_main.tf
+                    echo "================================================================"
+                    echo "           AI FIXED TERRAFORM CODE"
+                    echo "================================================================"
+                    cat /tmp/ai_fixed_main.tf
+                    echo "================================================================"
                 '''
-                input message: 'Review the AI suggested fix shown above. Do you approve applying these fixes?',
-                      ok: 'Approve - Apply Fix',
-                      submitter: 'admin'
             }
         }
 
-        stage('Apply AI Fix') {
-            when {
-                environment name: 'NEEDS_FIX', value: 'true'
-            }
+        stage('Human Approval: Apply Fix?') {
             steps {
-                echo '========== Stage 8: Applying AI Fix =========='
+                echo '========== Stage 6: Review AI Fix =========='
+                echo 'Review AI fixed code in Stage 5 above.'
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'Apply AI fixes to main.tf?', ok: 'Yes, Apply'
+                }
                 sh '''
-                    cp /tmp/ai-fixed-main.tf terraform/main.tf
-                    echo "AI fixes applied successfully!"
-                    cat terraform/main.tf
+                    cp terraform/main.tf terraform/main.tf.backup
+                    cp /tmp/ai_fixed_main.tf terraform/main.tf
+                    echo "Fix applied!"
                 '''
             }
         }
 
         stage('Trivy Re-Scan') {
-            when {
-                environment name: 'NEEDS_FIX', value: 'true'
-            }
             steps {
-                echo '========== Stage 9: Final Security Scan =========='
+                echo '========== Stage 7: Re-scanning After Fix =========='
                 sh '''
+                    echo "================================================================"
+                    echo "           POST-FIX SCAN RESULTS"
+                    echo "================================================================"
                     trivy config \
                         --exit-code 1 \
                         --severity HIGH,CRITICAL \
                         --format table \
                         ./terraform
+                    echo "================================================================"
                 '''
             }
             post {
-                success {
-                    echo 'ZERO vulnerabilities! AI fixes verified successfully!'
-                }
-                failure {
-                    echo 'Still has vulnerabilities - review AI fix!'
+                success { echo 'SUCCESS: Zero vulnerabilities!' }
+                failure { echo 'WARNING: Vulnerabilities remain!' }
+            }
+        }
+
+        stage('Push Fixed Code to GitHub') {
+            steps {
+                echo '========== Stage 8: Pushing Fixed Code to GitHub =========='
+                withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                    sh '''
+                        git config user.email "jenkins@devsecops.com"
+                        git config user.name "Jenkins AI Bot"
+                        git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
+                        git add terraform/main.tf
+                        git commit -m "AI Security Fix: Resolved Terraform vulnerabilities via Groq AI"
+                        git push origin main
+                        echo "Fixed code pushed to GitHub!"
+                    '''
                 }
             }
         }
 
         stage('Terraform Plan') {
             steps {
-                echo '========== Stage 10: Terraform Plan =========='
-                sh '''
-                    echo "================================================"
-                    echo "Security scan passed!"
-                    echo "Infrastructure is secure and ready to deploy!"
-                    echo "================================================"
-                '''
+                echo '========== Stage 9: Terraform Plan =========='
+                echo 'Security scan passed! Fixed code pushed to GitHub!'
+                echo 'Ready for terraform apply with secure infrastructure.'
             }
         }
-
     }
 
     post {
-        always {
-            echo '========== Pipeline Complete =========='
-        }
-        success {
-            echo 'PIPELINE PASSED - Secure infrastructure ready!'
-        }
-        failure {
-            echo 'PIPELINE FAILED - Check logs above'
-        }
+        always  { echo '========== Pipeline Complete ==========' }
+        failure { echo 'Pipeline FAILED' }
+        success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
-```
-
----
-
-## What Changed
-
-Added a **Security Gate** stage that sets `NEEDS_FIX=true` or `NEEDS_FIX=false`. All AI stages use `when { environment name: 'NEEDS_FIX', value: 'true' }` — much more reliable than the previous `when expression` approach.
-
-**Two scenarios now:**
-```
-Vulnerable code  → Gate sets NEEDS_FIX=true  → AI stages run ✅
-Clean code       → Gate sets NEEDS_FIX=false → AI stages skipped ✅
