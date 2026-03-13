@@ -161,14 +161,15 @@ PYEOF
                     python3 /tmp/fix.py
                     rm -f /tmp/groq_key.txt
 
-                    python3 << 'FIXEOF'
+                   cat > /tmp/cidr_fix.py << 'PYEOF2'
 import re
 content = open('/tmp/ai_fixed_main.tf').read()
 content = re.sub(r'var\.\w+', '"0.0.0.0/0"', content)
 content = content.replace('subnet_id = aws_subnet.private.id', 'subnet_id = aws_subnet.public.id')
 open('/tmp/ai_fixed_main.tf', 'w').write(content)
 print("All variable CIDRs replaced!")
-FIXEOF
+PYEOF2
+                    python3 /tmp/cidr_fix.py
                 '''
             }
         }
@@ -277,3 +278,4 @@ FIXEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
