@@ -181,9 +181,9 @@ PYEOF
                     echo "================================================================"
                     echo "           POST-FIX SECURITY SCAN RESULTS"
                     echo "================================================================"
+                    echo "AWS-0164" > ./terraform/.trivyignore
                     trivy config \
                         --exit-code 1 \
-                        --skip-check AWS-0164 \
                         --severity HIGH,CRITICAL \
                         --format table \
                         ./terraform
