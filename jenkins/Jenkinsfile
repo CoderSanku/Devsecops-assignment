@@ -32,15 +32,15 @@ pipeline {
                     trivy --version
 
                     if ! command -v terraform &> /dev/null; then
-                        echo "Installing Terraform..."
-                        wget --tries=3 -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
-                        cd /tmp && unzip -o terraform.zip
-                        mv /tmp/terraform /usr/local/bin/terraform
-                        chmod +x /usr/local/bin/terraform
-                        rm -f /tmp/terraform.zip
-                        cd -
-                    fi
-                    terraform --version
+                    echo "Installing Terraform..."
+                    wget --tries=3 -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
+                    cd /tmp && unzip -o terraform.zip
+                    mv /tmp/terraform /usr/local/bin/terraform
+                    chmod +x /usr/local/bin/terraform
+                    rm -f /tmp/terraform.zip
+                    cd -
+                fi
+                terraform --version
                 '''
             }
         }
@@ -84,7 +84,7 @@ pipeline {
                 echo '========== Stage 4: Waiting for Human Review =========='
                 echo 'Review the vulnerability report in Stage 3 above.'
                 timeout(time: 30, unit: 'MINUTES') {
-                    input message: 'Vulnerabilities found! Send the report to Groq AI for automatic fix?', ok: 'Yes, Send to AI'
+                    input message: 'Vulnerabilities found. Send to Groq AI for fix?', ok: 'Yes, Send to AI'
                 }
             }
         }
@@ -98,87 +98,92 @@ pipeline {
             }
             steps {
                 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
-                sh 'echo "${GROQ_API_KEY}" > /tmp/groq_key.txt'
-                writeFile file: '/tmp/fix.py', text: '''
-import subprocess, json, urllib.request
+                sh '''
+                    cat > /tmp/fix.py << 'PYEOF'
+import subprocess, json, urllib.request, os, re
 
 result = subprocess.run(
-    ["jq", "-r", ".Results[]? | .Misconfigurations[]? | \\"ID: \\" + .ID + \\" | Severity: \\" + .Severity + \\" | Title: \\" + .Title + \\" | Fix: \\" + .Resolution"],
-    stdin=open("trivy-report.json"),
+    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
+    stdin=open('trivy-report.json'),
     capture_output=True, text=True
 )
 summary = result.stdout.strip()
-print("Vulnerabilities to fix:")
+print('Vulnerabilities found:')
 print(summary)
 
-main_tf = open("terraform/main.tf").read()
-
-instructions = (
-    "You are fixing a Terraform file. Vulnerabilities found by Trivy:\\n\\n"
-    + summary
-    + "\\n\\nCurrent terraform/main.tf:\\n\\n"
-    + main_tf
-    + "\\n\\nCRITICAL INSTRUCTIONS:\\n"
-    + "1. Return ONLY valid Terraform HCL code\\n"
-    + "2. Do NOT include markdown, backticks, or explanations\\n"
-    + "3. Output must start with: terraform {\\n"
-    + "4. Fix: SSH cidr to 10.0.0.0/16, app port cidr to 10.0.0.0/16, egress cidr to 10.0.0.0/16, http_tokens to required, encrypted to true, map_public_ip_on_launch to false"
-)
+main_tf = open('terraform/main.tf').read()
+user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
         {
             "role": "system",
-            "content": "You are a Terraform security expert. Output ONLY raw Terraform HCL. No markdown. No backticks. No explanations. Start directly with: terraform {"
+            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {"
         },
-        {"role": "user", "content": instructions}
+        {
+            "role": "user",
+            "content": user_msg
+        }
     ],
     "temperature": 0.1,
     "max_tokens": 4000
-}).encode("utf-8")
+}).encode('utf-8')
 
-api_key = open("/tmp/groq_key.txt").read().strip()
-print("Calling Groq API...")
+api_key = open('/tmp/groq_key.txt').read().strip()
+print('API key loaded, length: ' + str(len(api_key)))
 
 req = urllib.request.Request(
-    "https://api.groq.com/openai/v1/chat/completions",
+    'https://api.groq.com/openai/v1/chat/completions',
     data=payload,
-    headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}
+    headers={
+        'Authorization': 'Bearer ' + api_key,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
 )
 
+print('Calling Groq API...')
 try:
     with urllib.request.urlopen(req, timeout=60) as response:
-        result = json.loads(response.read().decode("utf-8"))
+        result = json.loads(response.read().decode('utf-8'))
 except urllib.error.HTTPError as e:
-    print("HTTP Error: " + str(e.code))
-    print(e.read().decode("utf-8"))
+    error_body = e.read().decode('utf-8')
+    print('HTTP Error: ' + str(e.code))
+    print('Error body: ' + error_body)
     raise
 
-fixed_code = result["choices"][0]["message"]["content"].strip()
+fixed_code = result['choices'][0]['message']['content']
+print('AI fix received! Cleaning output...')
 
-# Strip markdown backticks if Groq added them anyway
-if fixed_code.startswith("```"):
-    lines = fixed_code.splitlines()
-    lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    fixed_code = "\\n".join(lines).strip()
+# CLEANUP STEP 1: Strip opening ```terraform or ``` fence
+fixed_code = re.sub(r'^```[a-zA-Z]*\n?', '', fixed_code.strip())
+# CLEANUP STEP 2: Strip closing ``` fence
+fixed_code = re.sub(r'\n?```[\s\S]*$', '', fixed_code.strip())
+# CLEANUP STEP 3: Cut everything before terraform {
+if 'terraform {' in fixed_code:
+    fixed_code = fixed_code[fixed_code.index('terraform {'):]
+# CLEANUP STEP 4: Cut everything after the last closing brace
+lines = fixed_code.splitlines()
+last_brace_idx = 0
+for i, line in enumerate(lines):
+    if line.strip() == '}':
+        last_brace_idx = i
+fixed_code = '\n'.join(lines[:last_brace_idx + 1])
 
-# Trim anything before terraform {
-if not fixed_code.startswith("terraform {") and "terraform {" in fixed_code:
-    fixed_code = fixed_code[fixed_code.index("terraform {"):]
-
-print("AI fix received!")
-open("/tmp/ai_fixed_main.tf", "w").write(fixed_code)
-
-print("=" * 64)
-print("           AI FIXED TERRAFORM CODE")
-print("=" * 64)
+print('================================================================')
+print('           AI FIXED TERRAFORM CODE')
+print('================================================================')
 print(fixed_code)
-print("=" * 64)
-'''
-                sh '''
+print('================================================================')
+
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+    f.write(fixed_code)
+
+print('Saved to /tmp/ai_fixed_main.tf successfully!')
+PYEOF
+
+                    echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
                     python3 /tmp/fix.py
                     rm -f /tmp/groq_key.txt
                 '''
@@ -194,18 +199,15 @@ print("=" * 64)
             }
             steps {
                 echo '========== Stage 6: Review AI Fix =========='
-                echo 'The AI fixed code has been printed in Stage 5 above.'
-                echo 'Review it carefully before applying.'
+                echo 'Review the AI fixed code printed in Stage 5 above.'
                 timeout(time: 30, unit: 'MINUTES') {
-                    input message: 'Apply the AI fixes to terraform/main.tf?', ok: 'Yes, Apply Fix'
+                    input message: 'Apply AI fixes to terraform/main.tf?', ok: 'Yes, Apply Fix'
                 }
                 sh '''
                     cp terraform/main.tf terraform/main.tf.backup
                     cp /tmp/ai_fixed_main.tf terraform/main.tf
                     echo "AI fix applied to terraform/main.tf!"
-                    echo "Original backed up to terraform/main.tf.backup"
-                    echo "New file contents:"
-                    cat terraform/main.tf
+                    echo "Backup saved to terraform/main.tf.backup"
                 '''
             }
         }
@@ -229,13 +231,11 @@ print("=" * 64)
                         --format table \
                         ./terraform
                     echo "================================================================"
-                    echo "ZERO vulnerabilities confirmed - safe to deploy!"
-                    echo "================================================================"
                 '''
             }
             post {
-                success { echo 'SUCCESS: Zero HIGH/CRITICAL vulnerabilities after AI fix!' }
-                failure { echo 'WARNING: Some vulnerabilities remain - review AI fix!' }
+                success { echo 'SUCCESS: Zero HIGH/CRITICAL vulnerabilities!' }
+                failure { echo 'WARNING: Vulnerabilities still remain!' }
             }
         }
 
@@ -254,7 +254,7 @@ print("=" * 64)
                         git config user.name "Jenkins AI Bot"
                         git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
                         git add terraform/main.tf
-                        git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI"
+                        git commit -m "AI Security Fix: Resolved Terraform vulnerabilities via Groq AI"
                         git push origin main
                         echo "Fixed code pushed to GitHub successfully!"
                     '''
@@ -265,7 +265,7 @@ print("=" * 64)
         stage('Human Approval: Deploy to AWS?') {
             steps {
                 echo '========== Stage 9: Ready for AWS Deployment =========='
-                echo 'All security checks passed! Infrastructure code is secure.'
+                echo 'Security scan passed! Infrastructure code is secure.'
                 echo 'Terraform will provision the following on AWS ap-south-1:'
                 echo '  - VPC + Subnet + Internet Gateway'
                 echo '  - Security Group (restricted)'
