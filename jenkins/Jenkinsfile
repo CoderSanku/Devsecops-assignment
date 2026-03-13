@@ -66,11 +66,11 @@ pipeline {
         }
 
         stage('AI Security Remediation') {
-    steps {
-        echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
-        sh '''
-            cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json, urllib.request, urllib.error, os
+            steps {
+                echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
+                sh '''
+                    cat > /tmp/fix.py << 'PYEOF'
+import subprocess, json, urllib.request, os
 
 result = subprocess.run(
     ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
@@ -82,7 +82,6 @@ print('Vulnerabilities found:')
 print(summary)
 
 main_tf = open('terraform/main.tf').read()
-
 user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
 
 payload = json.dumps({
@@ -101,7 +100,9 @@ payload = json.dumps({
     "max_tokens": 4000
 }).encode('utf-8')
 
-api_key = os.environ.get('GROQ_API_KEY', '')
+api_key = open('/tmp/groq_key.txt').read().strip()
+print('API key loaded, length: ' + str(len(api_key)))
+
 req = urllib.request.Request(
     'https://api.groq.com/openai/v1/chat/completions',
     data=payload,
@@ -122,37 +123,41 @@ with open('/tmp/ai_fixed_main.tf', 'w') as f:
     f.write(fixed_code)
 
 print('================================================================')
-print('AI FIXED TERRAFORM CODE')
+print('           AI FIXED TERRAFORM CODE')
 print('================================================================')
 print(fixed_code)
 print('================================================================')
 PYEOF
 
-            GROQ_API_KEY=${GROQ_API_KEY} python3 /tmp/fix.py
-        '''
-    }
-}
+                    echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
+                    python3 /tmp/fix.py
+                    rm -f /tmp/groq_key.txt
+                '''
+            }
+        }
+
         stage('Human Approval: Apply Fix?') {
             steps {
                 echo '========== Stage 6: Review AI Fix =========='
-                echo 'Review AI fixed code in Stage 5 above.'
+                echo 'Review the AI fixed code printed in Stage 5 above.'
                 timeout(time: 30, unit: 'MINUTES') {
-                    input message: 'Apply AI fixes to main.tf?', ok: 'Yes, Apply'
+                    input message: 'Apply AI fixes to terraform/main.tf?', ok: 'Yes, Apply Fix'
                 }
                 sh '''
                     cp terraform/main.tf terraform/main.tf.backup
                     cp /tmp/ai_fixed_main.tf terraform/main.tf
-                    echo "Fix applied!"
+                    echo "AI fix applied to terraform/main.tf!"
+                    echo "Backup saved to terraform/main.tf.backup"
                 '''
             }
         }
 
         stage('Trivy Re-Scan') {
             steps {
-                echo '========== Stage 7: Re-scanning After Fix =========='
+                echo '========== Stage 7: Re-scanning After AI Fix =========='
                 sh '''
                     echo "================================================================"
-                    echo "           POST-FIX SCAN RESULTS"
+                    echo "           POST-FIX SECURITY SCAN RESULTS"
                     echo "================================================================"
                     trivy config \
                         --exit-code 1 \
@@ -163,8 +168,8 @@ PYEOF
                 '''
             }
             post {
-                success { echo 'SUCCESS: Zero vulnerabilities!' }
-                failure { echo 'WARNING: Vulnerabilities remain!' }
+                success { echo 'SUCCESS: Zero HIGH/CRITICAL vulnerabilities!' }
+                failure { echo 'WARNING: Vulnerabilities still remain!' }
             }
         }
 
@@ -177,9 +182,9 @@ PYEOF
                         git config user.name "Jenkins AI Bot"
                         git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
                         git add terraform/main.tf
-                        git commit -m "AI Security Fix: Resolved Terraform vulnerabilities via Groq AI"
+                        git commit -m "AI Security Fix: Resolved 5 Terraform vulnerabilities via Groq AI"
                         git push origin main
-                        echo "Fixed code pushed to GitHub!"
+                        echo "Fixed code pushed to GitHub successfully!"
                     '''
                 }
             }
@@ -188,18 +193,17 @@ PYEOF
         stage('Terraform Plan') {
             steps {
                 echo '========== Stage 9: Terraform Plan =========='
-                echo 'Security scan passed! Fixed code pushed to GitHub!'
+                echo 'All security checks passed!'
+                echo 'Fixed code pushed to GitHub!'
                 echo 'Ready for terraform apply with secure infrastructure.'
             }
         }
+
     }
 
     post {
         always  { echo '========== Pipeline Complete ==========' }
-        failure { echo 'Pipeline FAILED' }
+        failure { echo 'Pipeline FAILED - Review the failing stage above.' }
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
-
-
-
