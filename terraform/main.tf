@@ -12,7 +12,6 @@ provider "aws" {
 }
 
 # ===== NETWORKING =====
-
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -25,20 +24,13 @@ resource "aws_internet_gateway" "main" {
   tags   = { Name = "devsecops-igw" }
 }
 
+# VULN 5 - map_public_ip_on_launch = true (AWS-0164)
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/28"
+  cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
   map_public_ip_on_launch = true
   tags                    = { Name = "devsecops-public-subnet" }
-}
-
-resource "aws_subnet" "private" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.2.0/28"
-  availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
-  tags                    = { Name = "devsecops-private-subnet" }
 }
 
 resource "aws_route_table" "public" {
@@ -50,87 +42,85 @@ resource "aws_route_table" "public" {
   tags = { Name = "devsecops-rt" }
 }
 
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
-  tags = { Name = "devsecops-private-rt" }
-}
-
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
 }
 
-resource "aws_route_table_association" "private" {
-  subnet_id      = aws_subnet.private.id
-  route_table_id = aws_route_table.private.id
-}
-
 # ===== SECURITY GROUP =====
-
 resource "aws_security_group" "web" {
   name        = "devsecops-sg"
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
 
+  # VULN 3 - SSH open to 0.0.0.0/0 (AWS-0107)
   ingress {
-    description = "SSH restricted to specific IP"
+    description = "SSH open to world"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.1.0/28"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "App port restricted to specific IP"
+    description = "App port open to public"
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # VULN 2 - Unrestricted egress (AWS-0104)
   egress {
-    description = "Outbound restricted to necessary ports"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    description = "Outbound restricted to necessary ports"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
+    description = "Unrestricted outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = { Name = "devsecops-sg" }
 }
 
-# ===== EC2 INSTANCE =====
+# ===== KMS KEY =====
+resource "aws_kms_key" "example" {
+  description             = "KMS key for EC2 EBS encryption"
+  deletion_window_in_days = 10
+}
 
+# ===== EC2 INSTANCE =====
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.private.id
+  subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
+  # VULN 1 - IMDSv2 not required (AWS-0028)
   metadata_options {
-    http_tokens   = "required"
+    http_tokens   = "optional"
     http_endpoint = "enabled"
   }
 
+  # VULN 4 - Root volume not encrypted (AWS-0131)
   root_block_device {
     volume_size = 20
-    encrypted   = true
-    kms_key_id  = aws_kms_key.example.arn
+    encrypted   = false
   }
 
-  tags = { Name = "devsecops-server" }
-}
+  user_data = <<-EOF
+    #!/bin/bash
+    apt-get update -y
+    apt-get install -y docker.io
+    systemctl start docker
+    systemctl enable docker
+    docker run -d \
+      --restart always \
+      -p 3000:3000 \
+      --name devsecops-app \
+      node:18-alpine \
+      node -e "const http=require('http');http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'text/html'});res.end('<h1>DevSecOps Pipeline - Sanket Hanchate</h1><p>Secured by Trivy + Groq AI</p><p>AWS EC2 ap-south-1</p>');}).listen(3000,'0.0.0.0');"
+  EOF
 
-resource "aws_kms_key" "example" {
-  description             = "KMS key for EC2 instance"
-  deletion_window_in_days = 10
+  tags = { Name = "devsecops-server" }
 }
