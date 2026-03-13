@@ -1,3 +1,4 @@
+```terraform
 terraform {
   required_providers {
     aws = {
@@ -85,7 +86,7 @@ resource "aws_security_group" "web" {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["10.0.1.0/28"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -134,3 +135,4 @@ resource "aws_kms_key" "example" {
   description             = "KMS key for EC2 instance"
   deletion_window_in_days = 10
 }
+```
