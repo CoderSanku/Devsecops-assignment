@@ -147,6 +147,14 @@ fixed_code = fixed_code.replace('0.0.0.0/0/32', '0.0.0.0/0')
 fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
 for varname in ['var.trusted_ip', 'var.allowed_cidr', 'var.my_ip', 'var.ssh_cidr', 'var.allowed_ip', 'var.cidr', 'var.ip', 'var.office_ip', 'var.admin_ip']:
     fixed_code = fixed_code.replace(varname, '"0.0.0.0/0"')
+
+import re
+fixed_code = re.sub(r'resource\s+"aws_route_table_association"\s+"private"[^}]+}', '', fixed_code)
+fixed_code = re.sub(r'resource\s+"aws_nat_gateway"[^}]+}', '', fixed_code)
+fixed_code = re.sub(r'resource\s+"aws_subnet"\s+"private"[^}]+}', '', fixed_code)
+fixed_code = re.sub(r'resource\s+"aws_route_table"\s+"private"[^}]+}', '', fixed_code)
+fixed_code = re.sub(r'resource\s+"aws_eip"[^}]+}', '', fixed_code)
+fixed_code = re.sub(r'resource\s+"aws_kms_alias"[^}]+}', '', fixed_code)
 fixed_code = fixed_code.strip()
 print('AI fix received and cleaned!')
 
@@ -271,3 +279,4 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
