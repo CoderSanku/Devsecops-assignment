@@ -19,7 +19,7 @@ pipeline {
                 echo '========== Stage 2: Installing Trivy Scanner =========='
                 sh '''
                     apt-get update -y -qq
-                    apt-get install -y wget curl jq apt-transport-https gnupg
+                    apt-get install -y wget curl jq apt-transport-https gnupg dos2unix -qq
                     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor > /usr/share/keyrings/trivy.gpg
                     echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
                     apt-get update -qq
@@ -29,7 +29,7 @@ pipeline {
             }
         }
 
-stage('Trivy IaC Scan') {
+        stage('Trivy IaC Scan') {
             steps {
                 echo '========== Stage 3: Scanning Terraform for Vulnerabilities =========='
                 sh '''
@@ -54,17 +54,35 @@ stage('Trivy IaC Scan') {
                     VULN_COUNT=$(cat trivy-report.json | jq '[.Results[]?.Misconfigurations[]?] | length')
                     echo "Total vulnerabilities found: $VULN_COUNT"
                     echo "================================================"
-
                     echo $VULN_COUNT > /tmp/vuln_count.txt
                 '''
             }
         }
 
+        stage('Security Gate') {
+            steps {
+                script {
+                    def vulnCount = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim().toInteger()
+
+                    if (vulnCount == 0) {
+                        echo '================================================'
+                        echo 'ZERO vulnerabilities found! Code is already secure!'
+                        echo 'Skipping AI fix stages - proceeding to deploy!'
+                        echo '================================================'
+                        env.NEEDS_FIX = 'false'
+                    } else {
+                        echo '================================================'
+                        echo "Found ${vulnCount} vulnerabilities - proceeding to AI fix!"
+                        echo '================================================'
+                        env.NEEDS_FIX = 'true'
+                    }
+                }
+            }
+        }
+
         stage('Human Approval: Send to AI?') {
             when {
-                expression {
-                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
-                }
+                environment name: 'NEEDS_FIX', value: 'true'
             }
             steps {
                 sh '''
@@ -85,16 +103,12 @@ stage('Trivy IaC Scan') {
 
         stage('AI Suggests Fix') {
             when {
-                expression {
-                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
-                }
+                environment name: 'NEEDS_FIX', value: 'true'
             }
             steps {
-                echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
+                echo '========== Stage 6: Groq AI Analyzing and Fixing =========='
                 withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_KEY')]) {
                     sh '''
-                        apt-get install -y dos2unix -qq
-
                         cat trivy-report.json | jq -r '
                             .Results[]? |
                             .Misconfigurations[]? |
@@ -136,7 +150,7 @@ stage('Trivy IaC Scan') {
                             "https://api.groq.com/openai/v1/chat/completions" \
                             --output /tmp/response.json
 
-                        echo "Response file size: $(wc -c < /tmp/response.json) bytes"
+                        echo "Response size: $(wc -c < /tmp/response.json) bytes"
 
                         API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
                         if [ ! -z "$API_ERROR" ]; then
@@ -164,9 +178,7 @@ stage('Trivy IaC Scan') {
 
         stage('Human Approval: Apply AI Fix?') {
             when {
-                expression {
-                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
-                }
+                environment name: 'NEEDS_FIX', value: 'true'
             }
             steps {
                 sh '''
@@ -174,11 +186,11 @@ stage('Trivy IaC Scan') {
                     echo "================================================"
                     echo "   HUMAN REVIEW REQUIRED"
                     echo "================================================"
-                    echo "AI suggested fix is shown above in Stage 5 logs"
+                    echo "AI suggested fix is shown above in Stage 6 logs"
                     echo "Review the code before approving"
                     echo "================================================"
                 '''
-                input message: 'Review the AI suggested fix shown in Stage 5 logs. Do you approve applying these fixes?',
+                input message: 'Review the AI suggested fix shown above. Do you approve applying these fixes?',
                       ok: 'Approve - Apply Fix',
                       submitter: 'admin'
             }
@@ -186,15 +198,13 @@ stage('Trivy IaC Scan') {
 
         stage('Apply AI Fix') {
             when {
-                expression {
-                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
-                }
+                environment name: 'NEEDS_FIX', value: 'true'
             }
             steps {
-                echo '========== Stage 7: Applying AI Fix =========='
+                echo '========== Stage 8: Applying AI Fix =========='
                 sh '''
                     cp /tmp/ai-fixed-main.tf terraform/main.tf
-                    echo "AI fixes applied to terraform/main.tf"
+                    echo "AI fixes applied successfully!"
                     cat terraform/main.tf
                 '''
             }
@@ -202,12 +212,10 @@ stage('Trivy IaC Scan') {
 
         stage('Trivy Re-Scan') {
             when {
-                expression {
-                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
-                }
+                environment name: 'NEEDS_FIX', value: 'true'
             }
             steps {
-                echo '========== Stage 8: Final Security Scan =========='
+                echo '========== Stage 9: Final Security Scan =========='
                 sh '''
                     trivy config \
                         --exit-code 1 \
@@ -228,7 +236,7 @@ stage('Trivy IaC Scan') {
 
         stage('Terraform Plan') {
             steps {
-                echo '========== Stage 9: Terraform Plan =========='
+                echo '========== Stage 10: Terraform Plan =========='
                 sh '''
                     echo "================================================"
                     echo "Security scan passed!"
@@ -252,8 +260,15 @@ stage('Trivy IaC Scan') {
         }
     }
 }
+```
 
+---
 
+## What Changed
 
+Added a **Security Gate** stage that sets `NEEDS_FIX=true` or `NEEDS_FIX=false`. All AI stages use `when { environment name: 'NEEDS_FIX', value: 'true' }` — much more reliable than the previous `when expression` approach.
 
-
+**Two scenarios now:**
+```
+Vulnerable code  → Gate sets NEEDS_FIX=true  → AI stages run ✅
+Clean code       → Gate sets NEEDS_FIX=false → AI stages skipped ✅
