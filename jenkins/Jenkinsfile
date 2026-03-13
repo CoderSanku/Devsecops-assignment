@@ -100,7 +100,7 @@ user_msg = (
     "Vulnerabilities:\\n" + summary + "\\n\\n"
     "Terraform code:\\n" + main_tf + "\\n\\n"
     "Return ONLY this JSON format, nothing else:\\n"
-    '{"fixed_code": "PASTE THE COMPLETE FIXED TERRAFORM CODE HERE"}'
+    "{\"fixed_code\": \"PASTE THE COMPLETE FIXED TERRAFORM CODE HERE\"}"
 )
 
 payload = json.dumps({
