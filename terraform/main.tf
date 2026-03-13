@@ -14,7 +14,7 @@ provider "aws" {
 # ===== NETWORKING =====
 
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/24"
+  cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
   tags = { Name = "devsecops-vpc" }
@@ -27,10 +27,18 @@ resource "aws_internet_gateway" "main" {
 
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.0.0/28"
+  cidr_block              = "10.0.1.0/28"
   availability_zone       = "${var.aws_region}a"
   map_public_ip_on_launch = true
   tags                    = { Name = "devsecops-public-subnet" }
+}
+
+resource "aws_subnet" "private" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/28"
+  availability_zone       = "${var.aws_region}a"
+  map_public_ip_on_launch = true
+  tags                    = { Name = "devsecops-private-subnet" }
 }
 
 resource "aws_route_table" "public" {
@@ -42,9 +50,19 @@ resource "aws_route_table" "public" {
   tags = { Name = "devsecops-rt" }
 }
 
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+  tags = { Name = "devsecops-private-rt" }
+}
+
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "private" {
+  subnet_id      = aws_subnet.private.id
+  route_table_id = aws_route_table.private.id
 }
 
 # ===== SECURITY GROUP =====
@@ -59,7 +77,7 @@ resource "aws_security_group" "web" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/24"]
+    cidr_blocks = ["10.0.1.0/28"]
   }
 
   ingress {
@@ -67,7 +85,7 @@ resource "aws_security_group" "web" {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/24"]
+    cidr_blocks = ["10.0.1.0/28"]
   }
 
   egress {
@@ -94,7 +112,7 @@ resource "aws_security_group" "web" {
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.public.id
+  subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
