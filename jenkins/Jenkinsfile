@@ -94,7 +94,6 @@ print(summary)
 
 main_tf = open('terraform/main.tf').read()
 
-# Use JSON mode - Groq returns {"fixed_code": "..."} so NO markdown possible
 user_msg = (
     "You are a Terraform security expert. "
     "Fix ALL these vulnerabilities in the Terraform code and return a JSON object.\\n\\n"
@@ -146,9 +145,24 @@ except urllib.error.HTTPError as e:
 raw = result['choices'][0]['message']['content']
 print('Raw response received, parsing JSON...')
 
-# Parse the JSON - fixed_code is guaranteed clean, no markdown
 parsed = json.loads(raw)
 fixed_code = parsed['fixed_code']
+
+# ================================================================
+# FORCE OVERRIDE: Always keep map_public_ip_on_launch = true
+# so EC2 gets a public IP regardless of what Groq decided
+# ================================================================
+lines = fixed_code.splitlines()
+final_lines = []
+for line in lines:
+    if 'map_public_ip_on_launch' in line:
+        # Replace whatever Groq wrote with true
+        leading_spaces = len(line) - len(line.lstrip())
+        final_lines.append(' ' * leading_spaces + 'map_public_ip_on_launch = true')
+        print('OVERRIDE: Forced map_public_ip_on_launch = true')
+    else:
+        final_lines.append(line)
+fixed_code = '\n'.join(final_lines)
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
