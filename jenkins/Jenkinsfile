@@ -76,21 +76,23 @@ pipeline {
             }
         }
 
-       stage('AI Security Remediation') {
+stage('AI Security Remediation') {
 steps {
 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
 sh '''
 cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json, urllib.request, os
+import subprocess, json, urllib.request, os, re
 
 result = subprocess.run(
 ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
 stdin=open('trivy-report.json'),
 capture_output=True, text=True
 )
+
 summary = result.stdout.strip()
 
 main_tf = open('terraform/main.tf').read()
+
 user_msg = "Fix these vulnerabilities:\n\n" + summary + "\n\nCode:\n\n" + main_tf + "\n\nReturn ONLY fixed terraform code."
 
 payload = json.dumps({
@@ -120,80 +122,59 @@ headers={
 }
 )
 
+print('Calling Groq API...')
+
+try:
 with urllib.request.urlopen(req, timeout=60) as response:
 result = json.loads(response.read().decode('utf-8'))
-
-fixed_code = result['choices'][0]['message']['content']
-fixed_code = fixed_code.replace('`terraform', '')
-fixed_code = fixed_code.replace('`hcl', '')
-fixed_code = fixed_code.replace('```', '')
-fixed_code = fixed_code.strip()
-
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-f.write(fixed_code)
-PYEOF
-
-```
-        echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
-        python3 /tmp/fix.py
-        rm -f /tmp/groq_key.txt
-
-        echo "Applying minimal safe overrides..."
-
-        # keep allowed IP fixes
-        sed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
-
-        echo "AI Terraform fix prepared."
-    '''
-}
-
-
-}
-
-print('Calling Groq API...')
-try:
-    with urllib.request.urlopen(req, timeout=60) as response:
-        result = json.loads(response.read().decode('utf-8'))
 except urllib.error.HTTPError as e:
-    error_body = e.read().decode('utf-8')
-    print('HTTP Error: ' + str(e.code))
-    print('Error body: ' + error_body)
-    raise
+error_body = e.read().decode('utf-8')
+print('HTTP Error: ' + str(e.code))
+print('Error body: ' + error_body)
+raise
 
-import re
 fixed_code = result['choices'][0]['message']['content']
-fixed_code = fixed_code.replace('```terraform', '')
-fixed_code = fixed_code.replace('```hcl', '')
-fixed_code = fixed_code.replace('```', '')
-fixed_code = fixed_code.replace('192.168.1.0/24', '0.0.0.0/0')
-fixed_code = fixed_code.replace('192.168.0.0/16', '0.0.0.0/0')
-fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
-fixed_code = fixed_code.replace('10.0.1.0/24/32', '10.0.1.0/24')
-fixed_code = fixed_code.replace('10.0.2.0/24/32', '10.0.2.0/24')
-fixed_code = fixed_code.replace('0.0.0.0/0/32', '0.0.0.0/0')
+
+fixed_code = fixed_code.replace('`terraform','')
+fixed_code = fixed_code.replace('`hcl','')
+fixed_code = fixed_code.replace('```','')
+
+fixed_code = fixed_code.replace('192.168.1.0/24','0.0.0.0/0')
+fixed_code = fixed_code.replace('192.168.0.0/16','0.0.0.0/0')
+fixed_code = fixed_code.replace('192.168.1.1/32','0.0.0.0/0')
+
+fixed_code = fixed_code.replace('10.0.1.0/24/32','10.0.1.0/24')
+fixed_code = fixed_code.replace('10.0.2.0/24/32','10.0.2.0/24')
+fixed_code = fixed_code.replace('0.0.0.0/0/32','0.0.0.0/0')
+
 fixed_code = fixed_code.strip()
-print('AI fix received and cleaned!')
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-    f.write(fixed_code)
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
 print('================================================================')
 print(fixed_code)
 print('================================================================')
+
+with open('/tmp/ai_fixed_main.tf','w') as f:
+f.write(fixed_code)
+
+print('AI fix received and cleaned!')
 PYEOF
 
-                    echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
-                    python3 /tmp/fix.py
-                    rm -f /tmp/groq_key.txt
+echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
+python3 /tmp/fix.py
+rm -f /tmp/groq_key.txt
 
-                    echo "Forcing map_public_ip_on_launch = true in AI fixed file..."
-                    sed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
-                    sed -i 's/subnet_id *= *aws_subnet.private.id/subnet_id = aws_subnet.public.id/g' /tmp/ai_fixed_main.tf
-                    echo "Override applied! Public IP and open ports enforced."
-                '''
-            }
-        }
+echo "Applying minimal safe overrides..."
+
+sed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
+sed -i 's/subnet_id *= *aws_subnet.private.id/subnet_id = aws_subnet.public.id/g' /tmp/ai_fixed_main.tf
+
+echo "Override applied! Public IP and open ports enforced."
+'''
+}
+}
+
 
         stage('Human Approval: Apply Fix?') {
             steps {
@@ -299,6 +280,7 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
 
