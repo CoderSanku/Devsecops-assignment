@@ -218,7 +218,7 @@ PYEOF
                         git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
                         git add terraform/main.tf
                         git diff --cached --quiet && echo "No changes to commit" || git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI"
-                        git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI"
+                        git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI" || true
                         git push origin main
                         echo "Fixed code pushed to GitHub successfully!"
                     '''
@@ -275,6 +275,7 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
 
