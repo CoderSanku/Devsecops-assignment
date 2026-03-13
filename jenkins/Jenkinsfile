@@ -142,8 +142,9 @@ fixed_code = fixed_code.replace('```', '')
 fixed_code = fixed_code.replace('192.168.1.0/24', '0.0.0.0/0')
 fixed_code = fixed_code.replace('192.168.0.0/16', '0.0.0.0/0')
 fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
-fixed_code = re.sub(r'10\.0\.1\.0/24/32', '10.0.1.0/24', fixed_code)
-fixed_code = re.sub(r'(\d+\.\d+\.\d+\.\d+/\d+)/\d+', r'\1', fixed_code)
+fixed_code = fixed_code.replace('10.0.1.0/24/32', '10.0.1.0/24')
+fixed_code = fixed_code.replace('10.0.2.0/24/32', '10.0.2.0/24')
+fixed_code = fixed_code.replace('0.0.0.0/0/32', '0.0.0.0/0')
 fixed_code = fixed_code.strip()
 print('AI fix received and cleaned!')
 with open('/tmp/ai_fixed_main.tf', 'w') as f:
@@ -271,6 +272,7 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
 
