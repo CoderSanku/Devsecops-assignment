@@ -153,7 +153,8 @@ PYEOF
 
                     echo "Forcing map_public_ip_on_launch = true in AI fixed file..."
                     sed -i 's/map_public_ip_on_launch *= *false/map_public_ip_on_launch = true/g' /tmp/ai_fixed_main.tf
-                    echo "Override applied! Public IP will be assigned to EC2."
+                    sed -i 's/192\.168\.[0-9]*\.[0-9]*\/[0-9]*/0.0.0.0\/0/g' /tmp/ai_fixed_main.tf
+                    echo "Override applied! Public IP and open ports enforced."
                 '''
             }
         }
