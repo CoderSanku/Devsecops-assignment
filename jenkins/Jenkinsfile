@@ -29,7 +29,7 @@ pipeline {
             }
         }
 
-        stage('Trivy IaC Scan') {
+stage('Trivy IaC Scan') {
             steps {
                 echo '========== Stage 3: Scanning Terraform for Vulnerabilities =========='
                 sh '''
@@ -50,14 +50,22 @@ pipeline {
                         --format table \
                         ./terraform
                     echo "================================================"
-                    echo "Total vulnerabilities found:"
-                    cat trivy-report.json | jq '[.Results[]?.Misconfigurations[]?] | length'
+
+                    VULN_COUNT=$(cat trivy-report.json | jq '[.Results[]?.Misconfigurations[]?] | length')
+                    echo "Total vulnerabilities found: $VULN_COUNT"
                     echo "================================================"
+
+                    echo $VULN_COUNT > /tmp/vuln_count.txt
                 '''
             }
         }
 
         stage('Human Approval: Send to AI?') {
+            when {
+                expression {
+                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
+                }
+            }
             steps {
                 sh '''
                     echo ""
@@ -75,7 +83,12 @@ pipeline {
             }
         }
 
-      stage('AI Suggests Fix') {
+        stage('AI Suggests Fix') {
+            when {
+                expression {
+                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
+                }
+            }
             steps {
                 echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
                 withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_KEY')]) {
@@ -123,7 +136,6 @@ pipeline {
                             "https://api.groq.com/openai/v1/chat/completions" \
                             --output /tmp/response.json
 
-                        echo "Curl exit code: $?"
                         echo "Response file size: $(wc -c < /tmp/response.json) bytes"
 
                         API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
@@ -136,7 +148,6 @@ pipeline {
 
                         if [ ! -s /tmp/ai-fixed-main.tf ]; then
                             echo "ERROR: AI returned empty response!"
-                            cat /tmp/response.json
                             exit 1
                         fi
 
@@ -150,8 +161,13 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Human Approval: Apply AI Fix?') {
+            when {
+                expression {
+                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
+                }
+            }
             steps {
                 sh '''
                     echo ""
@@ -169,26 +185,30 @@ pipeline {
         }
 
         stage('Apply AI Fix') {
+            when {
+                expression {
+                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
+                }
+            }
             steps {
                 echo '========== Stage 7: Applying AI Fix =========='
                 sh '''
                     cp /tmp/ai-fixed-main.tf terraform/main.tf
                     echo "AI fixes applied to terraform/main.tf"
-                    echo ""
-                    echo "================================================"
-                    echo "   FINAL FIXED CODE:"
-                    echo "================================================"
                     cat terraform/main.tf
-                    echo "================================================"
                 '''
             }
         }
 
         stage('Trivy Re-Scan') {
+            when {
+                expression {
+                    sh(script: 'test $(cat /tmp/vuln_count.txt) -gt 0', returnStatus: true) == 0
+                }
+            }
             steps {
                 echo '========== Stage 8: Final Security Scan =========='
                 sh '''
-                    echo "Running Trivy on AI-fixed Terraform code..."
                     trivy config \
                         --exit-code 1 \
                         --severity HIGH,CRITICAL \
@@ -232,6 +252,7 @@ pipeline {
         }
     }
 }
+
 
 
 
