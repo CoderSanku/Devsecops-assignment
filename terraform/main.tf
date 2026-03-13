@@ -15,20 +15,27 @@ resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
-  tags = { Name = "devsecops-vpc" }
+  tags = {
+    Name = "devsecops-vpc"
+  }
 }
 
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
-  tags = { Name = "devsecops-igw" }
+  tags = {
+    Name = "devsecops-igw"
+  }
 }
 
+# ⚠️ VULNERABILITY 1 (AWS-0164): Subnet auto-assigns public IP
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = false
-  tags = { Name = "devsecops-public-subnet" }
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "devsecops-public-subnet"
+  }
 }
 
 resource "aws_route_table" "public" {
@@ -37,7 +44,9 @@ resource "aws_route_table" "public" {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.main.id
   }
-  tags = { Name = "devsecops-public-rt" }
+  tags = {
+    Name = "devsecops-rt"
+  }
 }
 
 resource "aws_route_table_association" "public" {
@@ -45,29 +54,23 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# ⚠️ VULNERABILITY 2 (AWS-0107): SSH open to entire internet
+# ⚠️ VULNERABILITY 3 (AWS-0104): Unrestricted egress to all IPs
 resource "aws_security_group" "web" {
-  name        = "devsecops-web-sg"
+  name        = "devsecops-sg"
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "SSH from trusted IP only"
+    description = "SSH from anywhere - INSECURE"
     from_port   = 22
     to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.1/32"]
-  }
-
-  ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "App Port 3000"
+    description = "App port"
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
@@ -75,24 +78,20 @@ resource "aws_security_group" "web" {
   }
 
   egress {
-    description = "HTTPS outbound"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
+    description = "All outbound traffic - INSECURE"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  egress {
-    description = "HTTP outbound"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  tags = {
+    Name = "devsecops-sg"
   }
-
-  tags = { Name = "devsecops-web-sg" }
 }
 
+# ⚠️ VULNERABILITY 4 (AWS-0131): Root volume not encrypted
+# ⚠️ VULNERABILITY 5 (AWS-0028): IMDSv2 not required
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
@@ -102,14 +101,25 @@ resource "aws_instance" "web" {
 
   root_block_device {
     volume_size = 20
-    encrypted   = true
+    encrypted   = false
   }
 
-  metadata_options {
-    http_tokens                 = "required"
-    http_endpoint               = "enabled"
-    http_put_response_hop_limit = 1
-  }
+  user_data = <<-EOF
+    #!/bin/bash
+    yum update -y
+    yum install -y docker
+    systemctl start docker
+    systemctl enable docker
+    docker run -d -p 3000:3000 node:18-alpine node -e "
+      const http = require('http');
+      http.createServer((req,res) => {
+        res.writeHead(200);
+        res.end('DevSecOps App Running!');
+      }).listen(3000);
+    "
+  EOF
 
-  tags = { Name = "devsecops-web-server" }
+  tags = {
+    Name = "devsecops-server"
+  }
 }
