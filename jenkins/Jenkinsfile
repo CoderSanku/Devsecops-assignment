@@ -3,8 +3,6 @@ pipeline {
 
     environment {
         GROQ_API_KEY = credentials('groq-api-key')
-        AWS_ACCESS_KEY = credentials('aws-access-key')
-        AWS_SECRET_KEY = credentials('aws-secret-key')
     }
 
     stages {
@@ -20,7 +18,7 @@ pipeline {
 
         stage('Install Tools') {
             steps {
-                echo '========== Stage 2: Installing Trivy & Terraform =========='
+                echo '========== Stage 2: Installing Trivy =========='
                 sh '''
                     apt-get update -y -qq
                     apt-get install -y wget apt-transport-https gnupg python3 curl unzip
@@ -83,7 +81,7 @@ pipeline {
                 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
                 sh '''
                     cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json, urllib.request, os
+import subprocess, json, urllib.request
 
 result = subprocess.run(
     ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
@@ -95,14 +93,23 @@ print('Vulnerabilities found:')
 print(summary)
 
 main_tf = open('terraform/main.tf').read()
-user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
+
+# Use JSON mode - Groq returns {"fixed_code": "..."} so NO markdown possible
+user_msg = (
+    "You are a Terraform security expert. "
+    "Fix ALL these vulnerabilities in the Terraform code and return a JSON object.\\n\\n"
+    "Vulnerabilities:\\n" + summary + "\\n\\n"
+    "Terraform code:\\n" + main_tf + "\\n\\n"
+    "Return ONLY this JSON format, nothing else:\\n"
+    '{"fixed_code": "PASTE THE COMPLETE FIXED TERRAFORM CODE HERE"}'
+)
 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
         {
             "role": "system",
-            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {"
+            "content": "You are a Terraform security expert. You always respond with valid JSON only. Never use markdown. Never add explanation outside JSON."
         },
         {
             "role": "user",
@@ -110,7 +117,8 @@ payload = json.dumps({
         }
     ],
     "temperature": 0.1,
-    "max_tokens": 4000
+    "max_tokens": 4000,
+    "response_format": {"type": "json_object"}
 }).encode('utf-8')
 
 api_key = open('/tmp/groq_key.txt').read().strip()
@@ -122,31 +130,36 @@ req = urllib.request.Request(
     headers={
         'Authorization': 'Bearer ' + api_key,
         'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0'
     }
 )
 
-print('Calling Groq API...')
+print('Calling Groq API with JSON mode...')
 try:
     with urllib.request.urlopen(req, timeout=60) as response:
         result = json.loads(response.read().decode('utf-8'))
 except urllib.error.HTTPError as e:
-    error_body = e.read().decode('utf-8')
     print('HTTP Error: ' + str(e.code))
-    print('Error body: ' + error_body)
+    print(e.read().decode('utf-8'))
     raise
 
-fixed_code = result['choices'][0]['message']['content']
-print('AI fix received!')
+raw = result['choices'][0]['message']['content']
+print('Raw response received, parsing JSON...')
 
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-    f.write(fixed_code)
+# Parse the JSON - fixed_code is guaranteed clean, no markdown
+parsed = json.loads(raw)
+fixed_code = parsed['fixed_code']
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
 print('================================================================')
 print(fixed_code)
 print('================================================================')
+
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+    f.write(fixed_code)
+
+print('Saved to /tmp/ai_fixed_main.tf successfully!')
 PYEOF
 
                     echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
@@ -226,6 +239,10 @@ PYEOF
         }
 
         stage('Terraform Apply - Deploy to AWS') {
+            environment {
+                AWS_ACCESS_KEY = credentials('aws-access-key')
+                AWS_SECRET_KEY = credentials('aws-secret-key')
+            }
             steps {
                 echo '========== Stage 10: Deploying to AWS with Terraform =========='
                 sh '''
