@@ -108,7 +108,8 @@ req = urllib.request.Request(
     data=payload,
     headers={
         'Authorization': 'Bearer ' + api_key,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
 )
 
@@ -213,4 +214,5 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
+
 
