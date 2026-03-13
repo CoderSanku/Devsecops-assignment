@@ -76,53 +76,79 @@ pipeline {
             }
         }
 
-        stage('AI Security Remediation') {
-            steps {
-                echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
-                sh '''
-                    cat > /tmp/fix.py << 'PYEOF'
+       stage('AI Security Remediation') {
+steps {
+echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
+sh '''
+cat > /tmp/fix.py << 'PYEOF'
 import subprocess, json, urllib.request, os
 
 result = subprocess.run(
-    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
-    stdin=open('trivy-report.json'),
-    capture_output=True, text=True
+['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
+stdin=open('trivy-report.json'),
+capture_output=True, text=True
 )
 summary = result.stdout.strip()
-print('Vulnerabilities found:')
-print(summary)
 
 main_tf = open('terraform/main.tf').read()
-user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
+user_msg = "Fix these vulnerabilities:\n\n" + summary + "\n\nCode:\n\n" + main_tf + "\n\nReturn ONLY fixed terraform code."
 
 payload = json.dumps({
-    "model": "llama-3.3-70b-versatile",
-    "messages": [
-       {
-    "role": "system",
-    "content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress as 0.0.0.0/0. Return ONLY HCL code."
-      },
-        {
-            "role": "user",
-            "content": user_msg
-        }
-    ],
-    "temperature": 0.1,
-    "max_tokens": 4000
+"model": "llama-3.3-70b-versatile",
+"messages": [
+{
+"role": "system",
+"content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress as 0.0.0.0/0. Return ONLY HCL code."
+},
+{
+"role": "user",
+"content": user_msg
+}
+],
+"temperature": 0.1,
+"max_tokens": 4000
 }).encode('utf-8')
 
 api_key = open('/tmp/groq_key.txt').read().strip()
-print('API key loaded, length: ' + str(len(api_key)))
 
 req = urllib.request.Request(
-    'https://api.groq.com/openai/v1/chat/completions',
-    data=payload,
-    headers={
-        'Authorization': 'Bearer ' + api_key,
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+'https://api.groq.com/openai/v1/chat/completions',
+data=payload,
+headers={
+'Authorization': 'Bearer ' + api_key,
+'Content-Type': 'application/json'
+}
 )
+
+with urllib.request.urlopen(req, timeout=60) as response:
+result = json.loads(response.read().decode('utf-8'))
+
+fixed_code = result['choices'][0]['message']['content']
+fixed_code = fixed_code.replace('`terraform', '')
+fixed_code = fixed_code.replace('`hcl', '')
+fixed_code = fixed_code.replace('```', '')
+fixed_code = fixed_code.strip()
+
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+f.write(fixed_code)
+PYEOF
+
+```
+        echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
+        python3 /tmp/fix.py
+        rm -f /tmp/groq_key.txt
+
+        echo "Applying minimal safe overrides..."
+
+        # keep allowed IP fixes
+        sed -i 's|"${var.ssh_allowed_ip}/32"|"10.0.1.0/24"|g' /tmp/ai_fixed_main.tf
+
+        echo "AI Terraform fix prepared."
+    '''
+}
+
+
+}
 
 print('Calling Groq API...')
 try:
@@ -273,6 +299,7 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
 
