@@ -153,47 +153,17 @@ except urllib.error.HTTPError as e:
     print('Error body: ' + error_body)
     raise
 
-fixed_code = result['choices'][0]['message']['content'].strip()
-print('AI fix received! Cleaning output...')
+fixed_code = result['choices'][0]['message']['content']
+print('AI fix received!')
 
-# CLEANUP - no regex, just simple string operations
-# Step 1: remove opening fence line like ```terraform or ```
-lines = fixed_code.splitlines()
-if lines and lines[0].strip().startswith('`'):
-    lines = lines[1:]
-# Step 2: remove closing fence line and everything after last ```
-clean_lines = []
-for line in lines:
-    if line.strip() == '`' * 3:
-        break
-    clean_lines.append(line)
-lines = clean_lines
-# Step 3: find where terraform { starts, drop anything before it
-start = 0
-for i, line in enumerate(lines):
-    if line.strip().startswith('terraform {'):
-        start = i
-        break
-lines = lines[start:]
-# Step 4: find last } and drop anything after it
-last_brace = 0
-for i, line in enumerate(lines):
-    if line.strip() == '}':
-        last_brace = i
-lines = lines[:last_brace + 1]
-
-fixed_code = '\n'.join(lines)
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+    f.write(fixed_code)
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
 print('================================================================')
 print(fixed_code)
 print('================================================================')
-
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-    f.write(fixed_code)
-
-print('Saved to /tmp/ai_fixed_main.tf successfully!')
 PYEOF
 
                     echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
@@ -326,3 +296,4 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
