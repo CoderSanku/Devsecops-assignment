@@ -1,4 +1,4 @@
-```terraform
+
 terraform {
   required_providers {
     aws = {
@@ -135,4 +135,3 @@ resource "aws_kms_key" "example" {
   description             = "KMS key for EC2 instance"
   deletion_window_in_days = 10
 }
-```
