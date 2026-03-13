@@ -3,6 +3,8 @@ pipeline {
 
     environment {
         GROQ_API_KEY = credentials('groq-api-key')
+        AWS_ACCESS_KEY = credentials('aws-access-key')
+        AWS_SECRET_KEY = credentials('aws-secret-key')
     }
 
     stages {
@@ -18,15 +20,26 @@ pipeline {
 
         stage('Install Tools') {
             steps {
-                echo '========== Stage 2: Installing Trivy =========='
+                echo '========== Stage 2: Installing Trivy & Terraform =========='
                 sh '''
                     apt-get update -y -qq
-                    apt-get install -y wget apt-transport-https gnupg python3
+                    apt-get install -y wget apt-transport-https gnupg python3 curl unzip
                     wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor > /usr/share/keyrings/trivy.gpg
                     echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
                     apt-get update -qq
                     apt-get install -y trivy
                     trivy --version
+
+                    if ! command -v terraform &> /dev/null; then
+                        echo "Installing Terraform..."
+                        wget --tries=3 -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
+                        cd /tmp && unzip -o terraform.zip
+                        mv /tmp/terraform /usr/local/bin/terraform
+                        chmod +x /usr/local/bin/terraform
+                        rm -f /tmp/terraform.zip
+                        cd -
+                    fi
+                    terraform --version
                 '''
             }
         }
@@ -82,27 +95,19 @@ print('Vulnerabilities found:')
 print(summary)
 
 main_tf = open('terraform/main.tf').read()
-
-system_msg = (
-    "You are a Terraform security expert. "
-    "You will receive vulnerable Terraform code and must return the fixed version. "
-    "STRICT RULES: "
-    "1. Return ONLY the raw Terraform HCL code, nothing else. "
-    "2. Do NOT write any backticks, markdown, or code fences. "
-    "3. Do NOT write any explanation, comments outside code, or summary. "
-    "4. Your response must start with exactly: terraform { "
-    "5. Your response must end with the last closing brace } of the file. "
-    "6. Fix ALL of these issues: change every cidr_blocks = [0.0.0.0/0] to cidr_blocks = [10.0.0.0/16], "
-    "set http_tokens = required, set encrypted = true, set map_public_ip_on_launch = false."
-)
-
-user_msg = "Here are the Trivy vulnerabilities:\\n\\n" + summary + "\\n\\nHere is the Terraform code to fix:\\n\\n" + main_tf
+user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
-        {"role": "system", "content": system_msg},
-        {"role": "user",   "content": user_msg}
+        {
+            "role": "system",
+            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {"
+        },
+        {
+            "role": "user",
+            "content": user_msg
+        }
     ],
     "temperature": 0.1,
     "max_tokens": 4000
@@ -117,7 +122,7 @@ req = urllib.request.Request(
     headers={
         'Authorization': 'Bearer ' + api_key,
         'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
 )
 
@@ -126,55 +131,22 @@ try:
     with urllib.request.urlopen(req, timeout=60) as response:
         result = json.loads(response.read().decode('utf-8'))
 except urllib.error.HTTPError as e:
+    error_body = e.read().decode('utf-8')
     print('HTTP Error: ' + str(e.code))
-    print(e.read().decode('utf-8'))
+    print('Error body: ' + error_body)
     raise
 
-fixed_code = result['choices'][0]['message']['content'].strip()
-print('AI fix received! Cleaning output...')
+fixed_code = result['choices'][0]['message']['content']
+print('AI fix received!')
 
-# CLEANUP: strip backtick fences and any text after last }
-lines = fixed_code.splitlines()
-
-# Remove opening fence line e.g. ```terraform
-if lines and lines[0].strip().startswith('`'):
-    lines = lines[1:]
-
-# Remove closing fence and everything after it
-clean = []
-for line in lines:
-    if line.strip() == '`' * 3:
-        break
-    clean.append(line)
-lines = clean
-
-# Find where terraform { starts
-start = 0
-for i, line in enumerate(lines):
-    if line.strip().startswith('terraform {'):
-        start = i
-        break
-lines = lines[start:]
-
-# Cut everything after last closing brace
-last = 0
-for i, line in enumerate(lines):
-    if line.strip() == '}':
-        last = i
-lines = lines[:last + 1]
-
-fixed_code = '\n'.join(lines)
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+    f.write(fixed_code)
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
 print('================================================================')
 print(fixed_code)
 print('================================================================')
-
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-    f.write(fixed_code)
-
-print('Saved successfully!')
 PYEOF
 
                     echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
@@ -238,12 +210,40 @@ PYEOF
             }
         }
 
-        stage('Terraform Plan') {
+        stage('Human Approval: Deploy to AWS?') {
             steps {
-                echo '========== Stage 9: Terraform Plan =========='
-                echo 'All security checks passed!'
-                echo 'Fixed code pushed to GitHub!'
-                echo 'Ready for terraform apply with secure infrastructure.'
+                echo '========== Stage 9: Ready for AWS Deployment =========='
+                echo 'Security scan passed! Infrastructure code is secure.'
+                echo 'Terraform will provision the following on AWS ap-south-1:'
+                echo '  - VPC + Subnet + Internet Gateway'
+                echo '  - Security Group (restricted)'
+                echo '  - EC2 t2.micro instance'
+                echo '  - Encrypted root volume'
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'All security checks passed! Deploy secure infrastructure to AWS?', ok: 'Yes, Deploy to AWS!'
+                }
+            }
+        }
+
+        stage('Terraform Apply - Deploy to AWS') {
+            steps {
+                echo '========== Stage 10: Deploying to AWS with Terraform =========='
+                sh '''
+                    export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY}
+                    export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_KEY}
+                    export AWS_DEFAULT_REGION=ap-south-1
+
+                    cd terraform
+                    terraform init -input=false
+                    terraform plan -input=false
+                    terraform apply -auto-approve -input=false
+
+                    echo "================================================================"
+                    echo "           DEPLOYMENT COMPLETE!"
+                    echo "================================================================"
+                    terraform output
+                    echo "================================================================"
+                '''
             }
         }
 
@@ -252,6 +252,6 @@ PYEOF
     post {
         always  { echo '========== Pipeline Complete ==========' }
         failure { echo 'Pipeline FAILED - Review the failing stage above.' }
-        success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
+        success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
