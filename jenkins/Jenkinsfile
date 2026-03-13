@@ -69,11 +69,11 @@ pipeline {
             steps {
                 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
                 sh '''
-                    python3 -c "
+                    cat > /tmp/fix.py << 'PYEOF'
 import subprocess, json
 
 result = subprocess.run(
-    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | \"ID: \" + .ID + \" | Severity: \" + .Severity + \" | Fix: \" + .Resolution'],
+    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
     stdin=open('trivy-report.json'),
     capture_output=True, text=True
 )
@@ -84,25 +84,27 @@ print(summary)
 main_tf = open('terraform/main.tf').read()
 
 payload = {
-    'model': 'llama-3.3-70b-versatile',
-    'messages': [
+    "model": "llama-3.3-70b-versatile",
+    "messages": [
         {
-            'role': 'system',
-            'content': 'You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {'
+            "role": "system",
+            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {"
         },
         {
-            'role': 'user',
-            'content': 'Fix these vulnerabilities:\n\n' + summary + '\n\nCode:\n\n' + main_tf + '\n\nReturn ONLY fixed terraform code.'
+            "role": "user",
+            "content": "Fix these vulnerabilities:\n\n" + summary + "\n\nCode:\n\n" + main_tf + "\n\nReturn ONLY fixed terraform code."
         }
     ],
-    'temperature': 0.1,
-    'max_tokens': 4000
+    "temperature": 0.1,
+    "max_tokens": 4000
 }
 
 with open('/tmp/prompt.json', 'w') as f:
     json.dump(payload, f)
 print('Prompt ready.')
-"
+PYEOF
+
+                    python3 /tmp/fix.py
 
                     echo "Calling Groq API..."
                     RESPONSE=$(curl -s --max-time 30 \
