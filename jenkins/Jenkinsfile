@@ -81,7 +81,7 @@ pipeline {
                 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
                 sh '''
                     cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json, urllib.request, os
+import subprocess, json, urllib.request
 
 result = subprocess.run(
     ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
@@ -93,14 +93,14 @@ print('Vulnerabilities found:')
 print(summary)
 
 main_tf = open('terraform/main.tf').read()
-user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
+user_msg = "Fix these Terraform vulnerabilities:\\n\\n" + summary + "\\n\\nTerraform code:\\n\\n" + main_tf + "\\n\\nIMPORTANT: Return ONLY the fixed terraform HCL code. Do NOT add any new resources. Do NOT use variables for cidr_blocks values. Only fix the existing resources listed above."
 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
         {
             "role": "system",
-            "content": "You are a DevSecOps expert. Fix Terraform vulnerabilities. Keep port 3000 ingress open to 0.0.0.0/0. Do not use variables for cidr_blocks, use actual IP values. Return ONLY HCL code, no markdown."
+            "content": "You are a Terraform security expert. Fix ONLY the vulnerabilities mentioned. Do NOT add new resources like NAT gateway, KMS key, private subnet, EIP, or extra route tables. Do NOT use variables like var.something for IP addresses - use actual CIDR strings like 10.0.1.0/24. Keep port 3000 open to 0.0.0.0/0. Return ONLY raw HCL terraform code with no markdown formatting."
         },
         {
             "role": "user",
@@ -120,7 +120,7 @@ req = urllib.request.Request(
     headers={
         'Authorization': 'Bearer ' + api_key,
         'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0'
     }
 )
 
@@ -129,41 +129,29 @@ try:
     with urllib.request.urlopen(req, timeout=60) as response:
         result = json.loads(response.read().decode('utf-8'))
 except urllib.error.HTTPError as e:
-    error_body = e.read().decode('utf-8')
     print('HTTP Error: ' + str(e.code))
-    print('Error body: ' + error_body)
+    print(e.read().decode('utf-8'))
     raise
 
 fixed_code = result['choices'][0]['message']['content']
+
 fixed_code = fixed_code.replace('```terraform', '')
 fixed_code = fixed_code.replace('```hcl', '')
 fixed_code = fixed_code.replace('```', '')
+fixed_code = fixed_code.replace('var.trusted_ip', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.allowed_cidr', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.my_ip', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.ssh_cidr', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.allowed_ip', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.cidr', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.office_ip', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.admin_ip', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('var.ip', '"10.0.1.0/24"')
+fixed_code = fixed_code.replace('192.168.1.0/24', '10.0.1.0/24')
+fixed_code = fixed_code.replace('192.168.0.0/16', '10.0.1.0/24')
 fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
-fixed_code = fixed_code.replace('var.trusted_ip', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.allowed_cidr', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.my_ip', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.ssh_cidr', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.allowed_ip', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.cidr', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.office_ip', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('var.admin_ip', '"0.0.0.0/0"')
-fixed_code = fixed_code.replace('192.168.1.0/24', '0.0.0.0/0')
-fixed_code = fixed_code.replace('192.168.0.0/16', '0.0.0.0/0')
 fixed_code = fixed_code.strip()
-```
 
-**Step 4 — Also update the AI system prompt to:**
-```
-You are a DevSecOps expert. Fix ONLY the egress cidr_blocks vulnerability. Do NOT add any new resources like NAT gateway, KMS key, private subnet, EIP, or route tables. Only modify existing resources. Return ONLY HCL code, no markdown.
-
-import re
-fixed_code = re.sub(r'resource\s+"aws_route_table_association"\s+"private"[^}]+}', '', fixed_code)
-fixed_code = re.sub(r'resource\s+"aws_nat_gateway"[^}]+}', '', fixed_code)
-fixed_code = re.sub(r'resource\s+"aws_subnet"\s+"private"[^}]+}', '', fixed_code)
-fixed_code = re.sub(r'resource\s+"aws_route_table"\s+"private"[^}]+}', '', fixed_code)
-fixed_code = re.sub(r'resource\s+"aws_eip"[^}]+}', '', fixed_code)
-fixed_code = re.sub(r'resource\s+"aws_kms_alias"[^}]+}', '', fixed_code)
-fixed_code = fixed_code.strip()
 print('AI fix received and cleaned!')
 
 with open('/tmp/ai_fixed_main.tf', 'w') as f:
@@ -230,7 +218,6 @@ PYEOF
                         git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
                         git add terraform/main.tf
                         git diff --cached --quiet && echo "No changes to commit" || git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI"
-                        git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI" || true
                         git push origin main
                         echo "Fixed code pushed to GitHub successfully!"
                     '''
@@ -287,5 +274,3 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
-
-
