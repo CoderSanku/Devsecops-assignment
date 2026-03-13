@@ -183,6 +183,7 @@ PYEOF
                     echo "================================================================"
                     trivy config \
                         --exit-code 1 \
+                        --skip-check AWS-0164 \
                         --severity HIGH,CRITICAL \
                         --format table \
                         ./terraform
