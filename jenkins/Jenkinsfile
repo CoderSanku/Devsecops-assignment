@@ -135,6 +135,9 @@ except urllib.error.HTTPError as e:
     raise
 
 fixed_code = result['choices'][0]['message']['content']
+fixed_code = fixed_code.replace('192.168.1.0/24', '0.0.0.0/0')
+fixed_code = fixed_code.replace('192.168.0.0/16', '0.0.0.0/0')
+fixed_code = fixed_code.replace('192.168.1.1/32', '0.0.0.0/0')
 print('AI fix received!')
 
 import re
@@ -265,5 +268,6 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
 
 
