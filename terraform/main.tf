@@ -25,12 +25,12 @@ resource "aws_internet_gateway" "main" {
   tags   = { Name = "devsecops-igw" }
 }
 
-# VULNERABILITY 1: map_public_ip_on_launch = false
+# VULNERABILITY 1: map_public_ip_on_launch = true
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = false
+  map_public_ip_on_launch = true
   tags                    = { Name = "devsecops-public-subnet" }
 }
 
@@ -55,31 +55,31 @@ resource "aws_security_group" "web" {
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
 
-  # VULNERABILITY 2: SSH restricted to specific IP
+  # VULNERABILITY 2: SSH open to entire internet
   ingress {
-    description = "SSH restricted to specific IP"
+    description = "SSH open to world"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["192.168.1.0/24"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # VULNERABILITY 3: App port restricted to specific IP
+  # VULNERABILITY 3: App port open to entire internet
   ingress {
-    description = "App port restricted to specific IP"
+    description = "App port open to world"
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["192.168.1.0/24"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # VULNERABILITY 4: Restricted egress
+  # VULNERABILITY 4: Unrestricted egress
   egress {
-    description = "Restricted outbound"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["8.8.8.8/32"]
+    description = "All outbound unrestricted"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = { Name = "devsecops-sg" }
@@ -94,16 +94,16 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
-  # VULNERABILITY 5: IMDSv2 required
+  # VULNERABILITY 5: IMDSv1 allowed
   metadata_options {
-    http_tokens   = "required"
+    http_tokens   = "optional"
     http_endpoint = "enabled"
   }
 
-  # VULNERABILITY 6: Encrypted root volume
+  # VULNERABILITY 6: Unencrypted root volume
   root_block_device {
     volume_size = 20
-    encrypted   = true
+    encrypted   = false
   }
 
   tags = { Name = "devsecops-server" }
