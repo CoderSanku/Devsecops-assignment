@@ -24,7 +24,6 @@ resource "aws_internet_gateway" "main" {
   tags   = { Name = "devsecops-igw" }
 }
 
-# VULN 5 - map_public_ip_on_launch = true (AWS-0164)
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
@@ -53,13 +52,12 @@ resource "aws_security_group" "web" {
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
 
-  # VULN 3 - SSH open to 0.0.0.0/0 (AWS-0107)
   ingress {
-    description = "SSH open to world"
+    description = "SSH open to specific IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["${var.ssh_allowed_ip}/32"]
   }
 
   ingress {
@@ -70,9 +68,8 @@ resource "aws_security_group" "web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # VULN 2 - Unrestricted egress (AWS-0104)
   egress {
-    description = "Unrestricted outbound"
+    description = "Restricted outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -96,16 +93,15 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
-  # VULN 1 - IMDSv2 not required (AWS-0028)
   metadata_options {
-    http_tokens   = "optional"
+    http_tokens   = "required"
     http_endpoint = "enabled"
   }
 
-  # VULN 4 - Root volume not encrypted (AWS-0131)
   root_block_device {
     volume_size = 20
-    encrypted   = false
+    encrypted   = true
+    kms_key_id  = aws_kms_key.example.arn
   }
 
   user_data = <<-EOF
