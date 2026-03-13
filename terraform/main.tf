@@ -14,7 +14,7 @@ provider "aws" {
 # ===== NETWORKING =====
 
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/24"
   enable_dns_hostnames = true
   enable_dns_support   = true
   tags = { Name = "devsecops-vpc" }
@@ -27,7 +27,7 @@ resource "aws_internet_gateway" "main" {
 
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
+  cidr_block              = "10.0.0.0/28"
   availability_zone       = "${var.aws_region}a"
   map_public_ip_on_launch = true
   tags                    = { Name = "devsecops-public-subnet" }
@@ -59,7 +59,7 @@ resource "aws_security_group" "web" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/24"]
   }
 
   ingress {
@@ -67,7 +67,7 @@ resource "aws_security_group" "web" {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/24"]
   }
 
   egress {
