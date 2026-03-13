@@ -31,45 +31,61 @@ pipeline {
             }
         }
 
-        stage('Trivy IaC Scan') {
-            steps {
-                echo '========== Stage 3: Scanning Terraform for Vulnerabilities =========='
-                sh '''
-                    trivy config \
-                        --exit-code 0 \
-                        --severity HIGH,CRITICAL \
-                        --format json \
-                        --output trivy-report.json \
-                        ./terraform
+       stage('Trivy IaC Scan') {
+    steps {
+        echo '========== Stage 3: Scanning Terraform for Vulnerabilities =========='
+        sh '''
+            trivy config \
+                --exit-code 0 \
+                --severity HIGH,CRITICAL \
+                --format json \
+                --output trivy-report.json \
+                ./terraform
 
-                    echo "================================================================"
-                    echo "           SECURITY VULNERABILITY REPORT"
-                    echo "================================================================"
-                    trivy config \
-                        --exit-code 0 \
-                        --severity HIGH,CRITICAL \
-                        --format table \
-                        ./terraform
-                    echo "================================================================"
-                '''
-            }
+            echo "================================================================"
+            echo "           SECURITY VULNERABILITY REPORT"
+            echo "================================================================"
+            trivy config \
+                --exit-code 0 \
+                --severity HIGH,CRITICAL \
+                --format table \
+                ./terraform
+            echo "================================================================"
+
+            VULN_COUNT=$(cat trivy-report.json | jq '[.Results[]? | .Misconfigurations[]?] | length')
+            echo "Total vulnerabilities found: $VULN_COUNT"
+            echo "$VULN_COUNT" > /tmp/vuln_count.txt
+        '''
+    }
+}
+
+stage('Human Approval: Send to AI?') {
+    when {
+        expression {
+            def count = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim()
+            return count != '0'
         }
-
-        stage('Human Approval: Send to AI?') {
-            steps {
-                echo '========== Stage 4: Waiting for Human Review =========='
-                echo 'Review the vulnerability report in Stage 3 above.'
-                timeout(time: 30, unit: 'MINUTES') {
-                    input message: 'Vulnerabilities found. Send to Groq AI for fix?', ok: 'Yes, Send to AI'
-                }
-            }
+    }
+    steps {
+        echo '========== Stage 4: Waiting for Human Review =========='
+        echo 'Review the vulnerability report in Stage 3 above.'
+        timeout(time: 30, unit: 'MINUTES') {
+            input message: 'Vulnerabilities found. Send to Groq AI for fix?', ok: 'Yes, Send to AI'
         }
+    }
+}
 
-        stage('AI Security Remediation') {
-            steps {
-                echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
-                sh '''
-                    cat > /tmp/fix.py << 'PYEOF'
+stage('AI Security Remediation') {
+    when {
+        expression {
+            def count = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim()
+            return count != '0'
+        }
+    }
+    steps {
+        echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
+        sh '''
+            cat > /tmp/fix.py << 'PYEOF'
 import subprocess, json, urllib.request, os
 
 result = subprocess.run(
@@ -122,7 +138,7 @@ except urllib.error.HTTPError as e:
     print('HTTP Error: ' + str(e.code))
     print('Error body: ' + error_body)
     raise
-    
+
 fixed_code = result['choices'][0]['message']['content']
 print('AI fix received!')
 
@@ -136,66 +152,83 @@ print(fixed_code)
 print('================================================================')
 PYEOF
 
-                    echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
-                    python3 /tmp/fix.py
-                    rm -f /tmp/groq_key.txt
-                '''
-            }
-        }
+            echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
+            python3 /tmp/fix.py
+            rm -f /tmp/groq_key.txt
+        '''
+    }
+}
 
-        stage('Human Approval: Apply Fix?') {
-            steps {
-                echo '========== Stage 6: Review AI Fix =========='
-                echo 'Review the AI fixed code printed in Stage 5 above.'
-                timeout(time: 30, unit: 'MINUTES') {
-                    input message: 'Apply AI fixes to terraform/main.tf?', ok: 'Yes, Apply Fix'
-                }
-                sh '''
-                    cp terraform/main.tf terraform/main.tf.backup
-                    cp /tmp/ai_fixed_main.tf terraform/main.tf
-                    echo "AI fix applied to terraform/main.tf!"
-                    echo "Backup saved to terraform/main.tf.backup"
-                '''
-            }
+stage('Human Approval: Apply Fix?') {
+    when {
+        expression {
+            def count = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim()
+            return count != '0'
         }
+    }
+    steps {
+        echo '========== Stage 6: Review AI Fix =========='
+        echo 'Review the AI fixed code printed in Stage 5 above.'
+        timeout(time: 30, unit: 'MINUTES') {
+            input message: 'Apply AI fixes to terraform/main.tf?', ok: 'Yes, Apply Fix'
+        }
+        sh '''
+            cp terraform/main.tf terraform/main.tf.backup
+            cp /tmp/ai_fixed_main.tf terraform/main.tf
+            echo "AI fix applied to terraform/main.tf!"
+        '''
+    }
+}
 
-        stage('Trivy Re-Scan') {
-            steps {
-                echo '========== Stage 7: Re-scanning After AI Fix =========='
-                sh '''
-                    echo "================================================================"
-                    echo "           POST-FIX SECURITY SCAN RESULTS"
-                    echo "================================================================"
-                    trivy config \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --format table \
-                        ./terraform
-                    echo "================================================================"
-                '''
-            }
-            post {
-                success { echo 'SUCCESS: Zero HIGH/CRITICAL vulnerabilities!' }
-                failure { echo 'WARNING: Vulnerabilities still remain!' }
-            }
+stage('Trivy Re-Scan') {
+    when {
+        expression {
+            def count = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim()
+            return count != '0'
         }
+    }
+    steps {
+        echo '========== Stage 7: Re-scanning After AI Fix =========='
+        sh '''
+            echo "================================================================"
+            echo "           POST-FIX SECURITY SCAN RESULTS"
+            echo "================================================================"
+            trivy config \
+                --exit-code 1 \
+                --severity HIGH,CRITICAL \
+                --format table \
+                ./terraform
+            echo "================================================================"
+        '''
+    }
+    post {
+        success { echo 'SUCCESS: Zero HIGH/CRITICAL vulnerabilities!' }
+        failure { echo 'WARNING: Vulnerabilities still remain!' }
+    }
+}
 
-        stage('Push Fixed Code to GitHub') {
-            steps {
-                echo '========== Stage 8: Pushing Fixed Code to GitHub =========='
-                withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
-                    sh '''
-                        git config user.email "jenkins@devsecops.com"
-                        git config user.name "Jenkins AI Bot"
-                        git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
-                        git add terraform/main.tf
-                        git commit -m "AI Security Fix: Resolved 5 Terraform vulnerabilities via Groq AI"
-                        git push origin main
-                        echo "Fixed code pushed to GitHub successfully!"
-                    '''
-                }
-            }
+stage('Push Fixed Code to GitHub') {
+    when {
+        expression {
+            def count = sh(script: 'cat /tmp/vuln_count.txt', returnStdout: true).trim()
+            return count != '0'
         }
+    }
+    steps {
+        echo '========== Stage 8: Pushing Fixed Code to GitHub =========='
+        withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+            sh '''
+                git config user.email "jenkins@devsecops.com"
+                git config user.name "Jenkins AI Bot"
+                git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
+                git add terraform/main.tf
+                git commit -m "AI Security Fix: Resolved Terraform vulnerabilities via Groq AI"
+                git push origin main
+                echo "Fixed code pushed to GitHub successfully!"
+            '''
+        }
+    }
+}
 
         stage('Terraform Plan') {
             steps {
@@ -214,5 +247,6 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
+
 
 
