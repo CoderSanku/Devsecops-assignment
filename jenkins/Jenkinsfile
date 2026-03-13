@@ -62,18 +62,14 @@ pipeline {
                 sh '''
                     echo ""
                     echo "================================================"
-                    echo "   SECURITY VULNERABILITIES DETECTED!"
+                    echo "   SECURITY VULNERABILITIES DETECTED"
                     echo "================================================"
-                    cat trivy-report.json | jq -r '
-                        .Results[]? |
-                        .Misconfigurations[]? |
-                        "  ID: " + .ID + " [" + .Severity + "]" + " - " + .Message
-                    '
+                    cat trivy-report.json | jq -r '.Results[]? | .Misconfigurations[]? | "  ID: " + .ID + " [" + .Severity + "] - " + .Message'
                     echo "================================================"
-                    echo "Waiting for human approval..."
+                    echo "Waiting for human approval to send to AI..."
                     echo "================================================"
                 '''
-                input message: 'Trivy found security vulnerabilities! Do you want to send the report to Groq AI for automatic fix suggestions?',
+                input message: 'Trivy found security vulnerabilities! Send report to Groq AI for fix suggestions?',
                       ok: 'Yes - Send to AI',
                       submitter: 'admin'
             }
@@ -81,46 +77,22 @@ pipeline {
 
         stage('AI Suggests Fix') {
             steps {
-                echo '========== Stage 5: Groq AI Analyzing Vulnerabilities =========='
+                echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
                 sh '''
-                    echo "Reading Trivy report..."
-                    SUMMARY=$(cat trivy-report.json | jq -r '
-                        .Results[]? |
-                        .Misconfigurations[]? |
-                        "ID: " + .ID + " | Severity: " + .Severity + " | Message: " + .Message + " | Fix: " + .Resolution
-                    ')
+                    SUMMARY=$(cat trivy-report.json | jq -r '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Message: " + .Message + " | Fix: " + .Resolution')
 
                     MAIN_TF=$(cat terraform/main.tf)
 
-                    echo "Sending to Groq AI..."
+                    printf '{"model":"llama-3.3-70b-versatile","messages":[{"role":"system","content":"You are a DevSecOps expert. Fix ALL Terraform vulnerabilities. Return ONLY raw HCL code starting with terraform { and nothing else. No markdown, no backticks, no explanation."},{"role":"user","content":"Fix these vulnerabilities:\n%s\n\nTerraform code:\n%s\n\nReturn ONLY fixed terraform code."}],"temperature":0.1,"max_tokens":4000}' "$SUMMARY" "$MAIN_TF" > /tmp/prompt.json
 
-                    cat > /tmp/prompt.json << PROMPTEOF
-{
-  "model": "llama-3.3-70b-versatile",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a DevSecOps security expert. You will be given Terraform code and a list of security vulnerabilities found by Trivy scanner. Your job is to fix ALL the vulnerabilities. Return ONLY the complete fixed Terraform HCL code. No explanation, no markdown formatting, no code blocks, no backticks. Start directly with: terraform {"
-    },
-    {
-      "role": "user",
-      "content": "Fix these security vulnerabilities found by Trivy:\n\n${SUMMARY}\n\nHere is the Terraform code to fix:\n\n${MAIN_TF}\n\nReturn ONLY the fixed terraform code starting with terraform {"
-    }
-  ],
-  "temperature": 0.1,
-  "max_tokens": 4000
-}
-PROMPTEOF
-
+                    echo "Calling Groq API..."
                     RESPONSE=$(curl -s \
                         "https://api.groq.com/openai/v1/chat/completions" \
                         -H "Authorization: Bearer ${GROQ_API_KEY}" \
                         -H "Content-Type: application/json" \
                         -d @/tmp/prompt.json)
 
-                    echo "AI Response received!"
                     API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
-
                     if [ ! -z "$API_ERROR" ]; then
                         echo "API Error: $API_ERROR"
                         exit 1
@@ -142,8 +114,6 @@ PROMPTEOF
                     echo "================================================"
                     cat /tmp/ai-fixed-main.tf
                     echo "================================================"
-                    echo "Review the AI suggested code above"
-                    echo "================================================"
                 '''
             }
         }
@@ -155,13 +125,12 @@ PROMPTEOF
                     echo "================================================"
                     echo "   HUMAN REVIEW REQUIRED"
                     echo "================================================"
-                    echo "AI has suggested fixes for all vulnerabilities."
-                    echo "The suggested code is shown above in Stage 5."
-                    echo "Please review before approving."
+                    echo "AI suggested fix is shown above in Stage 5 logs"
+                    echo "Review the code before approving"
                     echo "================================================"
                 '''
-                input message: 'Review the AI suggested Terraform code above. Do you approve applying these fixes?',
-                      ok: 'Approve - Apply AI Fix',
+                input message: 'Review the AI suggested fix shown in Stage 5 logs. Do you approve applying these fixes?',
+                      ok: 'Approve - Apply Fix',
                       submitter: 'admin'
             }
         }
@@ -170,15 +139,14 @@ PROMPTEOF
             steps {
                 echo '========== Stage 7: Applying AI Fix =========='
                 sh '''
-                    echo "Applying AI suggested fixes to terraform/main.tf..."
                     cp /tmp/ai-fixed-main.tf terraform/main.tf
+                    echo "AI fixes applied to terraform/main.tf"
                     echo ""
                     echo "================================================"
-                    echo "   FIXED CODE APPLIED:"
+                    echo "   FINAL FIXED CODE:"
                     echo "================================================"
                     cat terraform/main.tf
                     echo "================================================"
-                    echo "AI fixes applied successfully!"
                 '''
             }
         }
@@ -187,7 +155,7 @@ PROMPTEOF
             steps {
                 echo '========== Stage 8: Final Security Scan =========='
                 sh '''
-                    echo "Running Trivy scan on AI-fixed code..."
+                    echo "Running Trivy on AI-fixed Terraform code..."
                     trivy config \
                         --exit-code 1 \
                         --severity HIGH,CRITICAL \
@@ -197,10 +165,10 @@ PROMPTEOF
             }
             post {
                 success {
-                    echo 'ZERO vulnerabilities found! AI fixes verified!'
+                    echo 'ZERO vulnerabilities! AI fixes verified successfully!'
                 }
                 failure {
-                    echo 'Still has vulnerabilities - AI fix incomplete!'
+                    echo 'Still has vulnerabilities - review AI fix!'
                 }
             }
         }
@@ -231,23 +199,3 @@ PROMPTEOF
         }
     }
 }
-```
-
----
-
-## The Exact Flow This Creates:
-```
-Stage 1: Checkout code
-Stage 2: Install Trivy
-Stage 3: Trivy scans → finds 5 real vulnerabilities
-Stage 4: ⏸️ PAUSES → shows vulnerability list
-         → YOU click "Yes - Send to AI"
-Stage 5: Jenkins calls Groq API with ACTUAL report
-         → Groq reads real vulnerabilities
-         → Groq generates REAL fix dynamically
-         → Shows AI suggested code in console
-Stage 6: ⏸️ PAUSES → "Review AI fix above"
-         → YOU click "Approve - Apply AI Fix"
-Stage 7: Applies AI fix to main.tf
-Stage 8: Trivy re-scans → 0 vulnerabilities ✅
-Stage 9: Terraform Plan ✅
