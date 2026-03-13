@@ -25,7 +25,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags                    = { Name = "devsecops-public-subnet" }
 }
 resource "aws_route_table" "public" {
@@ -47,11 +47,11 @@ resource "aws_security_group" "web" {
   vpc_id      = aws_vpc.main.id
   # VULNERABILITY 2: SSH open to entire internet
   ingress {
-    description = "SSH open to world"
+    description = "SSH open to trusted IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.1.0/24"]
   }
   # VULNERABILITY 3: App port open to entire internet
   ingress {
@@ -63,11 +63,11 @@ resource "aws_security_group" "web" {
   }
   # VULNERABILITY 4: Unrestricted egress
   egress {
-    description = "All outbound unrestricted"
+    description = "Outbound restricted"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
   tags = { Name = "devsecops-sg" }
 }
@@ -93,13 +93,13 @@ resource "aws_instance" "web" {
 
   # VULNERABILITY 5: IMDSv1 allowed
   metadata_options {
-    http_tokens   = "optional"
+    http_tokens   = "required"
     http_endpoint = "enabled"
   }
   # VULNERABILITY 6: Unencrypted root volume
   root_block_device {
     volume_size = 20
-    encrypted   = false
+    encrypted   = true
   }
   tags = { Name = "devsecops-server" }
 }
