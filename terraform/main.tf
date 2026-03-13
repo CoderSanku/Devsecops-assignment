@@ -25,12 +25,12 @@ resource "aws_internet_gateway" "main" {
   tags   = { Name = "devsecops-igw" }
 }
 
-# VULNERABILITY 1: map_public_ip_on_launch = true
+# Fix VULNERABILITY 1: map_public_ip_on_launch = false
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags                    = { Name = "devsecops-public-subnet" }
 }
 
@@ -55,16 +55,16 @@ resource "aws_security_group" "web" {
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
 
-  # VULNERABILITY 2: SSH open to entire internet
+  # Fix VULNERABILITY 2: SSH open to specific IP
   ingress {
-    description = "SSH open to world"
+    description = "SSH open to specific IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.1.0/24"]
   }
 
-  # VULNERABILITY 3: App port open to entire internet
+  # Fix VULNERABILITY 3: No change, keep port 3000 open to entire internet
   ingress {
     description = "App port open to world"
     from_port   = 3000
@@ -73,13 +73,13 @@ resource "aws_security_group" "web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # VULNERABILITY 4: Unrestricted egress
+  # Fix VULNERABILITY 4: Restrict egress
   egress {
-    description = "All outbound unrestricted"
+    description = "All outbound restricted"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   tags = { Name = "devsecops-sg" }
@@ -94,16 +94,16 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
-  # VULNERABILITY 5: IMDSv1 allowed
+  # Fix VULNERABILITY 5: IMDSv2 required
   metadata_options {
-    http_tokens   = "optional"
+    http_tokens   = "required"
     http_endpoint = "enabled"
   }
 
-  # VULNERABILITY 6: Unencrypted root volume
+  # Fix VULNERABILITY 6: Encrypted root volume
   root_block_device {
     volume_size = 20
-    encrypted   = false
+    encrypted   = true
   }
 
   tags = { Name = "devsecops-server" }
