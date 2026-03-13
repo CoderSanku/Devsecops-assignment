@@ -98,116 +98,87 @@ pipeline {
             }
             steps {
                 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
-                sh '''
-                    cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json, urllib.request, os
+                sh 'echo "${GROQ_API_KEY}" > /tmp/groq_key.txt'
+                writeFile file: '/tmp/fix.py', text: '''
+import subprocess, json, urllib.request
 
-# Extract vulnerability summary from trivy report
 result = subprocess.run(
-    ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Title: " + .Title + " | Fix: " + .Resolution'],
-    stdin=open('trivy-report.json'),
+    ["jq", "-r", ".Results[]? | .Misconfigurations[]? | \\"ID: \\" + .ID + \\" | Severity: \\" + .Severity + \\" | Title: \\" + .Title + \\" | Fix: \\" + .Resolution"],
+    stdin=open("trivy-report.json"),
     capture_output=True, text=True
 )
 summary = result.stdout.strip()
 print("Vulnerabilities to fix:")
 print(summary)
 
-# Read the current terraform file
-main_tf = open('terraform/main.tf').read()
+main_tf = open("terraform/main.tf").read()
 
-# Build the prompt - very strict instructions to return ONLY HCL
-user_msg = """You are fixing a Terraform file. Here are the security vulnerabilities found by Trivy:
-
-""" + summary + """
-
-Here is the current terraform/main.tf file:
-
-""" + main_tf + """
-
-CRITICAL INSTRUCTIONS:
-1. Return ONLY valid Terraform HCL code
-2. Do NOT include any markdown formatting
-3. Do NOT include any backticks or triple backticks
-4. Do NOT include any explanations or comments about what you changed
-5. Do NOT include any text before or after the terraform code
-6. The output must start with: terraform {
-7. The output must be a complete, valid .tf file that terraform can parse
-
-Fix the vulnerabilities:
-- Change SSH (port 22) cidr_blocks from 0.0.0.0/0 to 10.0.0.0/16
-- Change app port cidr_blocks from 0.0.0.0/0 to 10.0.0.0/16
-- Change egress cidr_blocks from 0.0.0.0/0 to 10.0.0.0/16
-- Change http_tokens from optional to required
-- Change encrypted from false to true
-- Change map_public_ip_on_launch from true to false"""
+instructions = (
+    "You are fixing a Terraform file. Vulnerabilities found by Trivy:\\n\\n"
+    + summary
+    + "\\n\\nCurrent terraform/main.tf:\\n\\n"
+    + main_tf
+    + "\\n\\nCRITICAL INSTRUCTIONS:\\n"
+    + "1. Return ONLY valid Terraform HCL code\\n"
+    + "2. Do NOT include markdown, backticks, or explanations\\n"
+    + "3. Output must start with: terraform {\\n"
+    + "4. Fix: SSH cidr to 10.0.0.0/16, app port cidr to 10.0.0.0/16, egress cidr to 10.0.0.0/16, http_tokens to required, encrypted to true, map_public_ip_on_launch to false"
+)
 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
         {
             "role": "system",
-            "content": "You are a Terraform security expert. You ONLY output raw Terraform HCL code. You NEVER output markdown, backticks, explanations, or any text other than pure Terraform HCL. Your output always starts with 'terraform {' and contains nothing else."
+            "content": "You are a Terraform security expert. Output ONLY raw Terraform HCL. No markdown. No backticks. No explanations. Start directly with: terraform {"
         },
-        {
-            "role": "user",
-            "content": user_msg
-        }
+        {"role": "user", "content": instructions}
     ],
     "temperature": 0.1,
     "max_tokens": 4000
-}).encode('utf-8')
+}).encode("utf-8")
 
-api_key = open('/tmp/groq_key.txt').read().strip()
-print("Calling Groq API (llama-3.3-70b)...")
+api_key = open("/tmp/groq_key.txt").read().strip()
+print("Calling Groq API...")
 
 req = urllib.request.Request(
-    'https://api.groq.com/openai/v1/chat/completions',
+    "https://api.groq.com/openai/v1/chat/completions",
     data=payload,
-    headers={
-        'Authorization': 'Bearer ' + api_key,
-        'Content-Type': 'application/json'
-    }
+    headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}
 )
 
 try:
     with urllib.request.urlopen(req, timeout=60) as response:
-        result = json.loads(response.read().decode('utf-8'))
+        result = json.loads(response.read().decode("utf-8"))
 except urllib.error.HTTPError as e:
-    error_body = e.read().decode('utf-8')
-    print('HTTP Error: ' + str(e.code))
-    print('Error body: ' + error_body)
+    print("HTTP Error: " + str(e.code))
+    print(e.read().decode("utf-8"))
     raise
 
-fixed_code = result['choices'][0]['message']['content'].strip()
+fixed_code = result["choices"][0]["message"]["content"].strip()
 
-# Safety cleanup: strip any markdown backticks Groq might add despite instructions
-if fixed_code.startswith('```'):
-    lines = fixed_code.split('\n')
-    # Remove first line (```terraform or ```) and last line (```)
+# Strip markdown backticks if Groq added them anyway
+if fixed_code.startswith("```"):
+    lines = fixed_code.splitlines()
     lines = lines[1:]
-    if lines[-1].strip() == '```':
+    if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
-    fixed_code = '\n'.join(lines)
+    fixed_code = "\\n".join(lines).strip()
 
-# Verify it looks like valid terraform
-if not fixed_code.startswith('terraform {') and 'terraform {' in fixed_code:
-    # Find where terraform { starts and trim everything before it
-    idx = fixed_code.index('terraform {')
-    fixed_code = fixed_code[idx:]
+# Trim anything before terraform {
+if not fixed_code.startswith("terraform {") and "terraform {" in fixed_code:
+    fixed_code = fixed_code[fixed_code.index("terraform {"):]
 
-print("AI fix received and cleaned!")
+print("AI fix received!")
+open("/tmp/ai_fixed_main.tf", "w").write(fixed_code)
 
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-    f.write(fixed_code)
-
-print("================================================================")
+print("=" * 64)
 print("           AI FIXED TERRAFORM CODE")
-print("================================================================")
+print("=" * 64)
 print(fixed_code)
-print("================================================================")
-PYEOF
-
-                    echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
+print("=" * 64)
+'''
+                sh '''
                     python3 /tmp/fix.py
                     rm -f /tmp/groq_key.txt
                 '''
