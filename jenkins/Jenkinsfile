@@ -79,20 +79,17 @@ pipeline {
             steps {
                 echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
                 sh '''
-                    # Extract vulnerability summary
                     cat trivy-report.json | jq -r '
                         .Results[]? |
                         .Misconfigurations[]? |
                         "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
                     ' > /tmp/summary.txt
 
-                    echo "Vulnerabilities to fix:"
-                    cat /tmp/summary.txt
-
-                    # Read terraform code
                     cat terraform/main.tf > /tmp/maintf.txt
 
-                    # Build JSON payload safely using jq
+                    echo "Vulnerabilities being sent to AI:"
+                    cat /tmp/summary.txt
+
                     jq -n \
                         --arg summary "$(cat /tmp/summary.txt)" \
                         --arg code "$(cat /tmp/maintf.txt)" \
@@ -112,31 +109,30 @@ pipeline {
                             "max_tokens": 4000
                         }' > /tmp/prompt.json
 
-                    echo "Prompt JSON created successfully"
                     echo "Calling Groq API..."
 
-                    RESPONSE=$(curl -s \
+                    curl -s \
                         "https://api.groq.com/openai/v1/chat/completions" \
                         -H "Authorization: Bearer ${GROQ_API_KEY}" \
                         -H "Content-Type: application/json" \
-                        -d @/tmp/prompt.json)
+                        -d @/tmp/prompt.json \
+                        -o /tmp/response.json
 
-                    API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+                    # Check for API error
+                    API_ERROR=$(jq -r '.error.message // empty' /tmp/response.json)
                     if [ ! -z "$API_ERROR" ]; then
                         echo "API Error: $API_ERROR"
-                        echo "Full response: $RESPONSE"
                         exit 1
                     fi
 
-                    FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+                    # Extract fixed code
+                    jq -r '.choices[0].message.content // empty' /tmp/response.json > /tmp/ai-fixed-main.tf
 
-                    if [ -z "$FIXED_CODE" ]; then
+                    if [ ! -s /tmp/ai-fixed-main.tf ]; then
                         echo "ERROR: AI returned empty response!"
-                        echo "Full response: $RESPONSE"
+                        cat /tmp/response.json
                         exit 1
                     fi
-
-                    echo "$FIXED_CODE" > /tmp/ai-fixed-main.tf
 
                     echo ""
                     echo "================================================"
@@ -231,4 +227,5 @@ pipeline {
         }
     }
 }
+
 
