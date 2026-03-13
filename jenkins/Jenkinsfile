@@ -152,16 +152,6 @@ fixed_code = fixed_code.replace('192.168.0.0/16', '10.0.1.0/24')
 fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
 fixed_code = fixed_code.strip()
 
-lines = fixed_code.splitlines()
-final = []
-for line in lines:
-    if 'map_public_ip_on_launch' in line:
-        spaces = len(line) - len(line.lstrip())
-        final.append(' ' * spaces + 'map_public_ip_on_launch = true')
-    else:
-        final.append(line)
-fixed_code = '\n'.join(final)
-
 print('AI fix received and cleaned!')
 
 with open('/tmp/ai_fixed_main.tf', 'w') as f:
