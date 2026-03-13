@@ -100,7 +100,7 @@ payload = json.dumps({
     "messages": [
         {
             "role": "system",
-            "content": "You are a Terraform security expert. Fix ONLY the vulnerabilities mentioned. Do NOT add new resources like NAT gateway, KMS key, private subnet, EIP, or extra route tables. Do NOT use variables like var.something for IP addresses - use actual CIDR strings like 10.0.1.0/24. Keep port 3000 open to 0.0.0.0/0. Return ONLY raw HCL terraform code with no markdown formatting."
+            "content": "You are a Terraform security expert. Fix ONLY the vulnerabilities mentioned. Do NOT add new resources like NAT gateway, KMS key, private subnet, EIP, or extra route tables. Do NOT use variables like var.something for IP addresses - use actual CIDR strings like 10.0.1.0/24. Keep port 3000 open to 0.0.0.0/0. Keep map_public_ip_on_launch = true always. Return ONLY raw HCL terraform code with no markdown formatting."
         },
         {
             "role": "user",
@@ -151,6 +151,18 @@ fixed_code = fixed_code.replace('192.168.1.0/24', '10.0.1.0/24')
 fixed_code = fixed_code.replace('192.168.0.0/16', '10.0.1.0/24')
 fixed_code = fixed_code.replace('aws_subnet.private.id', 'aws_subnet.public.id')
 fixed_code = fixed_code.strip()
+
+# Force map_public_ip_on_launch = true no matter what Groq wrote
+lines = fixed_code.splitlines()
+final = []
+for line in lines:
+    if 'map_public_ip_on_launch' in line:
+        spaces = len(line) - len(line.lstrip())
+        final.append(' ' * spaces + 'map_public_ip_on_launch = true')
+        print('OVERRIDE: Forced map_public_ip_on_launch = true')
+    else:
+        final.append(line)
+fixed_code = '\n'.join(final)
 
 print('AI fix received and cleaned!')
 
