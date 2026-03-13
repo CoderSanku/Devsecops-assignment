@@ -6,34 +6,28 @@ terraform {
     }
   }
 }
-
 provider "aws" {
   region = var.aws_region
 }
-
 # ===== NETWORKING =====
-
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
   tags = { Name = "devsecops-vpc" }
 }
-
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
   tags   = { Name = "devsecops-igw" }
 }
-
-# Fix VULNERABILITY 1: map_public_ip_on_launch = false
+# VULNERABILITY 1: map_public_ip_on_launch = true
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = false
+  map_public_ip_on_launch = true
   tags                    = { Name = "devsecops-public-subnet" }
 }
-
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -42,29 +36,24 @@ resource "aws_route_table" "public" {
   }
   tags = { Name = "devsecops-rt" }
 }
-
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
 }
-
 # ===== SECURITY GROUP =====
-
 resource "aws_security_group" "web" {
   name        = "devsecops-sg"
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
-
-  # Fix VULNERABILITY 2: SSH open to a more restrictive range
+  # VULNERABILITY 2: SSH open to entire internet
   ingress {
-    description = "SSH open to a more restrictive range"
+    description = "SSH open to world"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.1.0/24"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
-
-  # Fix VULNERABILITY 3: No change, keep port 3000 open to 0.0.0.0/0
+  # VULNERABILITY 3: App port open to entire internet
   ingress {
     description = "App port open to world"
     from_port   = 3000
@@ -72,28 +61,17 @@ resource "aws_security_group" "web" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  # Fix VULNERABILITY 4: Restrict egress to necessary ports
+  # VULNERABILITY 4: Unrestricted egress
   egress {
-    description = "Outbound to necessary ports"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
+    description = "All outbound unrestricted"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  egress {
-    description = "Outbound to necessary ports"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   tags = { Name = "devsecops-sg" }
 }
-
 # ===== EC2 INSTANCE =====
-
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
@@ -101,17 +79,27 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
-  # Fix VULNERABILITY 5: IMDSv2 required
+  user_data = <<-USERDATA
+    #!/bin/bash
+    apt-get update -y
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+    apt-get install -y nodejs git
+    cd /home/ubuntu
+    git clone https://github.com/CoderSanku/DevSecOps-Assignment.git app
+    cd app
+    npm install
+    nohup node app.js > /var/log/app.log 2>&1 &
+  USERDATA
+
+  # VULNERABILITY 5: IMDSv1 allowed
   metadata_options {
-    http_tokens   = "required"
+    http_tokens   = "optional"
     http_endpoint = "enabled"
   }
-
-  # Fix VULNERABILITY 6: Encrypted root volume
+  # VULNERABILITY 6: Unencrypted root volume
   root_block_device {
     volume_size = 20
-    encrypted   = true
+    encrypted   = false
   }
-
   tags = { Name = "devsecops-server" }
 }
