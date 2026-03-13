@@ -27,12 +27,11 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# ⚠️ VULNERABILITY 1 (AWS-0164): Subnet auto-assigns public IP
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags = {
     Name = "devsecops-public-subnet"
   }
@@ -54,19 +53,17 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# ⚠️ VULNERABILITY 2 (AWS-0107): SSH open to entire internet
-# ⚠️ VULNERABILITY 3 (AWS-0104): Unrestricted egress to all IPs
 resource "aws_security_group" "web" {
   name        = "devsecops-sg"
   description = "Security group for web server"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "SSH from anywhere - INSECURE"
+    description = "SSH from trusted IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["192.168.1.0/24"]
   }
 
   ingress {
@@ -74,15 +71,15 @@ resource "aws_security_group" "web" {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["192.168.1.0/24"]
   }
 
   egress {
-    description = "All outbound traffic - INSECURE"
+    description = "Outbound traffic to trusted IP"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["192.168.1.0/24"]
   }
 
   tags = {
@@ -90,8 +87,6 @@ resource "aws_security_group" "web" {
   }
 }
 
-# ⚠️ VULNERABILITY 4 (AWS-0131): Root volume not encrypted
-# ⚠️ VULNERABILITY 5 (AWS-0028): IMDSv2 not required
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
@@ -101,7 +96,14 @@ resource "aws_instance" "web" {
 
   root_block_device {
     volume_size = 20
-    encrypted   = false
+    encrypted   = true
+    kms_key_id  = aws_kms_key.devsecops.arn
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
   }
 
   user_data = <<-EOF
@@ -122,4 +124,14 @@ resource "aws_instance" "web" {
   tags = {
     Name = "devsecops-server"
   }
+}
+
+resource "aws_kms_key" "devsecops" {
+  description             = "KMS key for DevSecOps"
+  deletion_window_in_days = 10
+}
+
+resource "aws_kms_alias" "devsecops" {
+  name          = "alias/devsecops"
+  target_key_id = aws_kms_key.devsecops.key_id
 }
