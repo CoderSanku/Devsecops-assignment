@@ -14,4 +14,11 @@ variable "key_name" {
   description = "EC2 Key Pair name"
   type        = string
   default     = "devsecops-key"
+
+}
+
+variable "ssh_allowed_ip" {
+  description = "IP allowed for SSH access"
+  type        = string
+  default     = "10.0.1.0/24"
 }
