@@ -32,13 +32,15 @@ pipeline {
                     trivy --version
 
                     if ! command -v terraform &> /dev/null; then
-                        echo "Installing Terraform..."
-                        wget -q https://releases.hashicorp.com/terraform/1.7.0/terraform_1.7.0_linux_amd64.zip
-                        unzip -o terraform_1.7.0_linux_amd64.zip
-                        mv terraform /usr/local/bin/
-                        rm terraform_1.7.0_linux_amd64.zip
-                    fi
-                    terraform --version
+                    echo "Installing Terraform..."
+                    wget --tries=3 -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
+                    cd /tmp && unzip -o terraform.zip
+                    mv /tmp/terraform /usr/local/bin/terraform
+                    chmod +x /usr/local/bin/terraform
+                    rm -f /tmp/terraform.zip
+                    cd -
+                fi
+                terraform --version
                 '''
             }
         }
@@ -294,3 +296,4 @@ PYEOF
         success { echo 'Pipeline PASSED - App is LIVE on AWS!' }
     }
 }
+
