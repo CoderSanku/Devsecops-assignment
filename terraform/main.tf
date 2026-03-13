@@ -29,14 +29,22 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags = { Name = "devsecops-public-subnet" }
+}
+
+resource "aws_subnet" "private" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "${var.aws_region}a"
+  map_public_ip_on_launch = false
+  tags = { Name = "devsecops-private-subnet" }
 }
 
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
-    cidr_block = "0.0.0.0/0"
+    cidr_block = "10.0.0.0/16"
     gateway_id = aws_internet_gateway.main.id
   }
   tags = { Name = "devsecops-rt" }
@@ -47,10 +55,12 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "private" {
+  subnet_id      = aws_subnet.private.id
+  route_table_id = aws_route_table.public.id
+}
+
 # ===== SECURITY GROUP =====
-# VULNERABILITY 1: SSH open to entire internet
-# VULNERABILITY 2: App port open to entire internet
-# VULNERABILITY 3: Unrestricted egress
 
 resource "aws_security_group" "web" {
   name        = "devsecops-sg"
@@ -58,52 +68,61 @@ resource "aws_security_group" "web" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "SSH open to world"
+    description = "SSH restricted to specific IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["192.168.1.0/24"]
   }
 
   ingress {
-    description = "App port open to world"
+    description = "App port restricted to specific IP"
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["192.168.1.0/24"]
   }
 
   egress {
-    description = "All outbound unrestricted"
+    description = "Outbound restricted to specific IP"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["192.168.1.0/24"]
   }
 
   tags = { Name = "devsecops-sg" }
 }
 
 # ===== EC2 INSTANCE =====
-# VULNERABILITY 4: IMDSv1 allowed (http_tokens = optional)
-# VULNERABILITY 5: Unencrypted root volume
 
 resource "aws_instance" "web" {
   ami                    = var.ami_id
   instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.public.id
+  subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = var.key_name
 
   metadata_options {
-    http_tokens   = "optional"
+    http_tokens   = "required"
     http_endpoint = "enabled"
   }
 
   root_block_device {
     volume_size = 20
-    encrypted   = false
+    encrypted   = true
+    kms_key_id  = aws_kms_key.devsecops.arn
   }
 
   tags = { Name = "devsecops-server" }
+}
+
+resource "aws_kms_key" "devsecops" {
+  description             = "KMS key for devsecops"
+  deletion_window_in_days = 10
+}
+
+resource "aws_kms_alias" "devsecops" {
+  name          = "alias/devsecops"
+  target_key_id = aws_kms_key.devsecops.key_id
 }
