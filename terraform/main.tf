@@ -31,6 +31,14 @@ resource "aws_subnet" "public" {
   tags                    = { Name = "devsecops-public-subnet" }
 }
 
+resource "aws_subnet" "private" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "${var.aws_region}a"
+  map_public_ip_on_launch = false
+  tags                    = { Name = "devsecops-private-subnet" }
+}
+
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -40,9 +48,19 @@ resource "aws_route_table" "public" {
   tags = { Name = "devsecops-rt" }
 }
 
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+  tags = { Name = "devsecops-private-rt" }
+}
+
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "private" {
+  subnet_id = aws_subnet.public.id
+  route_table_id = aws_route_table.private.id
 }
 
 resource "aws_security_group" "web" {
@@ -51,11 +69,11 @@ resource "aws_security_group" "web" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "SSH from anywhere - INSECURE"
+    description = "SSH from trusted IP - SECURE"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.trusted_ip]
   }
 
   ingress {
@@ -86,18 +104,19 @@ resource "aws_instance" "web" {
 
   root_block_device {
     volume_size = 20
-    encrypted   = false
+    encrypted   = true
+    kms_key_id  = aws_kms_key.main.arn
   }
 
   tags = { Name = "devsecops-server" }
 }
-```
 
-This is the **original vulnerable version** — no NAT gateway, no private subnet, no KMS key. Simple and clean so AI won't add extra resources that conflict.
+resource "aws_kms_key" "main" {
+  description             = "KMS key for EBS encryption"
+  deletion_window_in_days = 10
+}
 
----
-
-**Then also run this in your local terminal to clean AWS state:**
-```
-cd F:\devsecops-assignment\terraform
-terraform destroy -auto-approve
+resource "aws_kms_alias" "main" {
+  name          = "alias/devsecops-kms"
+  target_key_id = aws_kms_key.main.key_id
+}
