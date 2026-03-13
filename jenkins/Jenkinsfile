@@ -100,7 +100,7 @@ pipeline {
                 echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
                 sh '''
                     cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json, urllib.request, os, re
+import subprocess, json, urllib.request, os
 
 result = subprocess.run(
     ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
@@ -153,23 +153,36 @@ except urllib.error.HTTPError as e:
     print('Error body: ' + error_body)
     raise
 
-fixed_code = result['choices'][0]['message']['content']
+fixed_code = result['choices'][0]['message']['content'].strip()
 print('AI fix received! Cleaning output...')
 
-# CLEANUP STEP 1: Strip opening ```terraform or ``` fence
-fixed_code = re.sub(r'^```[a-zA-Z]*\n?', '', fixed_code.strip())
-# CLEANUP STEP 2: Strip closing ``` fence
-fixed_code = re.sub(r'\n?```[\s\S]*$', '', fixed_code.strip())
-# CLEANUP STEP 3: Cut everything before terraform {
-if 'terraform {' in fixed_code:
-    fixed_code = fixed_code[fixed_code.index('terraform {'):]
-# CLEANUP STEP 4: Cut everything after the last closing brace
+# CLEANUP - no regex, just simple string operations
+# Step 1: remove opening fence line like ```terraform or ```
 lines = fixed_code.splitlines()
-last_brace_idx = 0
+if lines and lines[0].strip().startswith('`'):
+    lines = lines[1:]
+# Step 2: remove closing fence line and everything after last ```
+clean_lines = []
+for line in lines:
+    if line.strip() == '`' * 3:
+        break
+    clean_lines.append(line)
+lines = clean_lines
+# Step 3: find where terraform { starts, drop anything before it
+start = 0
+for i, line in enumerate(lines):
+    if line.strip().startswith('terraform {'):
+        start = i
+        break
+lines = lines[start:]
+# Step 4: find last } and drop anything after it
+last_brace = 0
 for i, line in enumerate(lines):
     if line.strip() == '}':
-        last_brace_idx = i
-fixed_code = '\n'.join(lines[:last_brace_idx + 1])
+        last_brace = i
+lines = lines[:last_brace + 1]
+
+fixed_code = '\n'.join(lines)
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
