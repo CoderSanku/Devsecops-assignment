@@ -66,10 +66,10 @@ pipeline {
         }
 
         stage('AI Security Remediation') {
-            steps {
-                echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
-                sh '''
-                    cat > /tmp/fix.py << 'PYEOF'
+    steps {
+        echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
+        sh '''
+            cat > /tmp/fix.py << 'PYEOF'
 import subprocess, json
 
 result = subprocess.run(
@@ -83,6 +83,8 @@ print(summary)
 
 main_tf = open('terraform/main.tf').read()
 
+user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
+
 payload = {
     "model": "llama-3.3-70b-versatile",
     "messages": [
@@ -92,7 +94,7 @@ payload = {
         },
         {
             "role": "user",
-            "content": "Fix these vulnerabilities:\n\n" + summary + "\n\nCode:\n\n" + main_tf + "\n\nReturn ONLY fixed terraform code."
+            "content": user_msg
         }
     ],
     "temperature": 0.1,
@@ -104,35 +106,34 @@ with open('/tmp/prompt.json', 'w') as f:
 print('Prompt ready.')
 PYEOF
 
-                    python3 /tmp/fix.py
+            python3 /tmp/fix.py
 
-                    echo "Calling Groq API..."
-                    RESPONSE=$(curl -s --max-time 30 \
-                        "https://api.groq.com/openai/v1/chat/completions" \
-                        -H "Authorization: Bearer ${GROQ_API_KEY}" \
-                        -H "Content-Type: application/json" \
-                        -d @/tmp/prompt.json)
+            echo "Calling Groq API..."
+            RESPONSE=$(curl -s --max-time 30 \
+                "https://api.groq.com/openai/v1/chat/completions" \
+                -H "Authorization: Bearer ${GROQ_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d @/tmp/prompt.json)
 
-                    echo "API Response received."
+            echo "API Response received."
 
-                    FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+            FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
 
-                    if [ -z "$FIXED_CODE" ]; then
-                        echo "ERROR: AI returned empty!"
-                        echo "$RESPONSE"
-                        exit 1
-                    fi
+            if [ -z "$FIXED_CODE" ]; then
+                echo "ERROR: AI returned empty!"
+                echo "$RESPONSE"
+                exit 1
+            fi
 
-                    echo "$FIXED_CODE" > /tmp/ai_fixed_main.tf
-                    echo "================================================================"
-                    echo "           AI FIXED TERRAFORM CODE"
-                    echo "================================================================"
-                    cat /tmp/ai_fixed_main.tf
-                    echo "================================================================"
-                '''
-            }
-        }
-
+            echo "$FIXED_CODE" > /tmp/ai_fixed_main.tf
+            echo "================================================================"
+            echo "           AI FIXED TERRAFORM CODE"
+            echo "================================================================"
+            cat /tmp/ai_fixed_main.tf
+            echo "================================================================"
+        '''
+    }
+}
         stage('Human Approval: Apply Fix?') {
             steps {
                 echo '========== Stage 6: Review AI Fix =========='
@@ -201,3 +202,4 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
+
