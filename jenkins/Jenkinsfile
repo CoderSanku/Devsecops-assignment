@@ -109,7 +109,7 @@ PYEOF
             python3 /tmp/fix.py
 
             echo "Calling Groq API..."
-            RESPONSE=$(curl -s --max-time 30 \
+           RESPONSE=$(curl -s --max-time 60 \
                 "https://api.groq.com/openai/v1/chat/completions" \
                 -H "Authorization: Bearer ${GROQ_API_KEY}" \
                 -H "Content-Type: application/json" \
@@ -202,4 +202,5 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
+
 
