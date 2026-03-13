@@ -75,17 +75,46 @@ pipeline {
             }
         }
 
-        stage('AI Suggests Fix') {
+       stage('AI Suggests Fix') {
             steps {
                 echo '========== Stage 5: Groq AI Analyzing and Fixing =========='
                 sh '''
-                    SUMMARY=$(cat trivy-report.json | jq -r '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Message: " + .Message + " | Fix: " + .Resolution')
+                    # Extract vulnerability summary
+                    cat trivy-report.json | jq -r '
+                        .Results[]? |
+                        .Misconfigurations[]? |
+                        "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution
+                    ' > /tmp/summary.txt
 
-                    MAIN_TF=$(cat terraform/main.tf)
+                    echo "Vulnerabilities to fix:"
+                    cat /tmp/summary.txt
 
-                    printf '{"model":"llama-3.3-70b-versatile","messages":[{"role":"system","content":"You are a DevSecOps expert. Fix ALL Terraform vulnerabilities. Return ONLY raw HCL code starting with terraform { and nothing else. No markdown, no backticks, no explanation."},{"role":"user","content":"Fix these vulnerabilities:\n%s\n\nTerraform code:\n%s\n\nReturn ONLY fixed terraform code."}],"temperature":0.1,"max_tokens":4000}' "$SUMMARY" "$MAIN_TF" > /tmp/prompt.json
+                    # Read terraform code
+                    cat terraform/main.tf > /tmp/maintf.txt
 
+                    # Build JSON payload safely using jq
+                    jq -n \
+                        --arg summary "$(cat /tmp/summary.txt)" \
+                        --arg code "$(cat /tmp/maintf.txt)" \
+                        '{
+                            "model": "llama-3.3-70b-versatile",
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": "You are a DevSecOps expert. Fix ALL Terraform vulnerabilities listed. Return ONLY raw HCL terraform code. No markdown, no backticks, no explanation. Start directly with: terraform {"
+                                },
+                                {
+                                    "role": "user",
+                                    "content": ("Fix these vulnerabilities:\n\n" + $summary + "\n\nTerraform code to fix:\n\n" + $code + "\n\nReturn ONLY the fixed terraform code.")
+                                }
+                            ],
+                            "temperature": 0.1,
+                            "max_tokens": 4000
+                        }' > /tmp/prompt.json
+
+                    echo "Prompt JSON created successfully"
                     echo "Calling Groq API..."
+
                     RESPONSE=$(curl -s \
                         "https://api.groq.com/openai/v1/chat/completions" \
                         -H "Authorization: Bearer ${GROQ_API_KEY}" \
@@ -95,6 +124,7 @@ pipeline {
                     API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
                     if [ ! -z "$API_ERROR" ]; then
                         echo "API Error: $API_ERROR"
+                        echo "Full response: $RESPONSE"
                         exit 1
                     fi
 
@@ -114,10 +144,12 @@ pipeline {
                     echo "================================================"
                     cat /tmp/ai-fixed-main.tf
                     echo "================================================"
+                    echo "Review the AI suggested code above then approve"
+                    echo "================================================"
                 '''
             }
         }
-
+        
         stage('Human Approval: Apply AI Fix?') {
             steps {
                 sh '''
@@ -199,3 +231,4 @@ pipeline {
         }
     }
 }
+
