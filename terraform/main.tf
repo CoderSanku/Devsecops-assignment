@@ -120,3 +120,15 @@ resource "aws_instance" "web" {
 
   tags = { Name = "devsecops-server" }
 }
+
+# ===== EIP =====
+resource "aws_eip" "web" {
+  instance = aws_instance.web.id
+  vpc      = true
+}
+
+# ===== EIP ASSOCIATION =====
+resource "aws_eip_association" "web" {
+  instance_id   = aws_instance.web.id
+  allocation_id = aws_eip.web.id
+}
