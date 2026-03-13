@@ -29,7 +29,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = false
+  map_public_ip_on_launch = true
   tags                    = { Name = "devsecops-public-subnet" }
 }
 
@@ -59,7 +59,7 @@ resource "aws_security_group" "web" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.1.0/24"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -71,11 +71,11 @@ resource "aws_security_group" "web" {
   }
 
   egress {
-    description = "All outbound restricted"
+    description = "All outbound allowed"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = { Name = "devsecops-sg" }
