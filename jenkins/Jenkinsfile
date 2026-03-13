@@ -70,7 +70,7 @@ pipeline {
         echo '========== Stage 5: Groq AI Fixing Vulnerabilities =========='
         sh '''
             cat > /tmp/fix.py << 'PYEOF'
-import subprocess, json
+import subprocess, json, urllib.request, urllib.error, os
 
 result = subprocess.run(
     ['jq', '-r', '.Results[]? | .Misconfigurations[]? | "ID: " + .ID + " | Severity: " + .Severity + " | Fix: " + .Resolution'],
@@ -85,7 +85,7 @@ main_tf = open('terraform/main.tf').read()
 
 user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
 
-payload = {
+payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
         {
@@ -99,38 +99,36 @@ payload = {
     ],
     "temperature": 0.1,
     "max_tokens": 4000
-}
+}).encode('utf-8')
 
-with open('/tmp/prompt.json', 'w') as f:
-    json.dump(payload, f)
-print('Prompt ready.')
+api_key = os.environ.get('GROQ_API_KEY', '')
+req = urllib.request.Request(
+    'https://api.groq.com/openai/v1/chat/completions',
+    data=payload,
+    headers={
+        'Authorization': 'Bearer ' + api_key,
+        'Content-Type': 'application/json'
+    }
+)
+
+print('Calling Groq API...')
+with urllib.request.urlopen(req, timeout=60) as response:
+    result = json.loads(response.read().decode('utf-8'))
+
+fixed_code = result['choices'][0]['message']['content']
+print('AI fix received!')
+
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+    f.write(fixed_code)
+
+print('================================================================')
+print('AI FIXED TERRAFORM CODE')
+print('================================================================')
+print(fixed_code)
+print('================================================================')
 PYEOF
 
-            python3 /tmp/fix.py
-
-            echo "Calling Groq API..."
-           RESPONSE=$(curl -s --max-time 60 \
-                "https://api.groq.com/openai/v1/chat/completions" \
-                -H "Authorization: Bearer ${GROQ_API_KEY}" \
-                -H "Content-Type: application/json" \
-                -d @/tmp/prompt.json)
-
-            echo "API Response received."
-
-            FIXED_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
-
-            if [ -z "$FIXED_CODE" ]; then
-                echo "ERROR: AI returned empty!"
-                echo "$RESPONSE"
-                exit 1
-            fi
-
-            echo "$FIXED_CODE" > /tmp/ai_fixed_main.tf
-            echo "================================================================"
-            echo "           AI FIXED TERRAFORM CODE"
-            echo "================================================================"
-            cat /tmp/ai_fixed_main.tf
-            echo "================================================================"
+            GROQ_API_KEY=${GROQ_API_KEY} python3 /tmp/fix.py
         '''
     }
 }
@@ -202,5 +200,6 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
+
 
 
