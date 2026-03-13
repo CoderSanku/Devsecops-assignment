@@ -82,19 +82,27 @@ print('Vulnerabilities found:')
 print(summary)
 
 main_tf = open('terraform/main.tf').read()
-user_msg = "Fix these vulnerabilities:\\n\\n" + summary + "\\n\\nCode:\\n\\n" + main_tf + "\\n\\nReturn ONLY fixed terraform code."
+
+system_msg = (
+    "You are a Terraform security expert. "
+    "You will receive vulnerable Terraform code and must return the fixed version. "
+    "STRICT RULES: "
+    "1. Return ONLY the raw Terraform HCL code, nothing else. "
+    "2. Do NOT write any backticks, markdown, or code fences. "
+    "3. Do NOT write any explanation, comments outside code, or summary. "
+    "4. Your response must start with exactly: terraform { "
+    "5. Your response must end with the last closing brace } of the file. "
+    "6. Fix ALL of these issues: change every cidr_blocks = [0.0.0.0/0] to cidr_blocks = [10.0.0.0/16], "
+    "set http_tokens = required, set encrypted = true, set map_public_ip_on_launch = false."
+)
+
+user_msg = "Here are the Trivy vulnerabilities:\\n\\n" + summary + "\\n\\nHere is the Terraform code to fix:\\n\\n" + main_tf
 
 payload = json.dumps({
     "model": "llama-3.3-70b-versatile",
     "messages": [
-        {
-            "role": "system",
-            "content": "You are a DevSecOps expert. Return ONLY fixed Terraform HCL code. No explanation, no markdown, no backticks. Start with: terraform {"
-        },
-        {
-            "role": "user",
-            "content": user_msg
-        }
+        {"role": "system", "content": system_msg},
+        {"role": "user",   "content": user_msg}
     ],
     "temperature": 0.1,
     "max_tokens": 4000
@@ -109,7 +117,7 @@ req = urllib.request.Request(
     headers={
         'Authorization': 'Bearer ' + api_key,
         'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0'
     }
 )
 
@@ -118,22 +126,55 @@ try:
     with urllib.request.urlopen(req, timeout=60) as response:
         result = json.loads(response.read().decode('utf-8'))
 except urllib.error.HTTPError as e:
-    error_body = e.read().decode('utf-8')
     print('HTTP Error: ' + str(e.code))
-    print('Error body: ' + error_body)
+    print(e.read().decode('utf-8'))
     raise
-    
-fixed_code = result['choices'][0]['message']['content']
-print('AI fix received!')
 
-with open('/tmp/ai_fixed_main.tf', 'w') as f:
-    f.write(fixed_code)
+fixed_code = result['choices'][0]['message']['content'].strip()
+print('AI fix received! Cleaning output...')
+
+# CLEANUP: strip backtick fences and any text after last }
+lines = fixed_code.splitlines()
+
+# Remove opening fence line e.g. ```terraform
+if lines and lines[0].strip().startswith('`'):
+    lines = lines[1:]
+
+# Remove closing fence and everything after it
+clean = []
+for line in lines:
+    if line.strip() == '`' * 3:
+        break
+    clean.append(line)
+lines = clean
+
+# Find where terraform { starts
+start = 0
+for i, line in enumerate(lines):
+    if line.strip().startswith('terraform {'):
+        start = i
+        break
+lines = lines[start:]
+
+# Cut everything after last closing brace
+last = 0
+for i, line in enumerate(lines):
+    if line.strip() == '}':
+        last = i
+lines = lines[:last + 1]
+
+fixed_code = '\n'.join(lines)
 
 print('================================================================')
 print('           AI FIXED TERRAFORM CODE')
 print('================================================================')
 print(fixed_code)
 print('================================================================')
+
+with open('/tmp/ai_fixed_main.tf', 'w') as f:
+    f.write(fixed_code)
+
+print('Saved successfully!')
 PYEOF
 
                     echo "${GROQ_API_KEY}" > /tmp/groq_key.txt
@@ -189,7 +230,7 @@ PYEOF
                         git config user.name "Jenkins AI Bot"
                         git remote set-url origin https://${GIT_USER}:${GIT_TOKEN}@github.com/CoderSanku/DevSecOps-Assignment.git
                         git add terraform/main.tf
-                        git commit -m "AI Security Fix: Resolved 5 Terraform vulnerabilities via Groq AI"
+                        git commit -m "AI Security Fix: Resolved all Terraform vulnerabilities via Groq AI"
                         git push origin main
                         echo "Fixed code pushed to GitHub successfully!"
                     '''
@@ -214,5 +255,3 @@ PYEOF
         success { echo 'Pipeline PASSED - Secure code pushed to GitHub!' }
     }
 }
-
-
